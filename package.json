@@ -1,0 +1,57 @@
+{
+  "name": "@ravi-labs/mindmap-mcp-server",
+  "version": "0.1.0",
+  "description": "Mind Map — a memory consolidation / context-handoff MCP server. Capture context from any AI tool, resume it anywhere, and let it decay gracefully.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mindmap-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "clean": "rm -rf dist",
+    "test": "node scripts/smoke.mjs && node scripts/smoke-http.mjs",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "memory",
+    "context",
+    "claude",
+    "chatgpt"
+  ],
+  "license": "Apache-2.0",
+  "author": "ravi-labs",
+  "homepage": "https://github.com/ravi-labs/mindmap-mcp-server#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ravi-labs/mindmap-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ravi-labs/mindmap-mcp-server/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.2",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
