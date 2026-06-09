@@ -86,6 +86,79 @@ npm install && npm run build
 node dist/index.js install --local   # points clients at this checkout
 ```
 
+## Using it day to day
+
+Just talk naturally inside your AI tool — the model calls the right tool:
+
+- **"Save this to mind map"** → captures the current context
+- **"Resume my work on \<topic\>"** → pulls it back into a fresh session
+- **"What's in my mind map?"** / **"Show my mind map health"** → browse / score
+
+Run `npx @ravi-labs/mindmap-mcp-server quickstart` for the full getting-started guide.
+
+### Make capture automatic
+
+So you don't have to ask each time, add one line to your client's instructions
+(e.g. Claude Code's `CLAUDE.md`):
+
+> At the end of a substantive session, call `mindmap_capture` to save the context.
+> When I reference past work, call `mindmap_resume` first.
+
+The tools are also described to encourage the model to do this proactively.
+
+## Bring in your past sessions
+
+Import your existing Claude history into Mind Map — distilled, not raw dumps:
+
+```bash
+npx @ravi-labs/mindmap-mcp-server import --dry-run   # preview
+npx @ravi-labs/mindmap-mcp-server import             # apply
+```
+
+Covers **Claude Code** (CLI — full prompts), **Cowork** (title + opening
+message), **VS Code Copilot** (full prompts), and **Cursor** (chat titles +
+prompts); each memory is tagged by source. Filters: `--source code|cowork|copilot|cursor`,
+`--project <name>`, `--limit N`. Imported memories keep their original dates, so
+old ones settle into cold traces automatically.
+
+Imported memories capture the **discussion** (your prompts + the assistant's
+substantive answers), not just titles — for the transcript-backed sources
+(Claude Code, Cursor, Copilot). Re-run with `--reimport` to refresh existing
+memories in place after an upgrade.
+
+Notes:
+- **Cursor** stores chats in a (often multi-GB) SQLite DB, read via Node's
+  built-in SQLite — so Cursor import needs **Node 22.5+** (other sources don't).
+- **ChatGPT** and **Claude.ai web chats** can't be imported — they live in the
+  cloud, not local files. (A future "import from data-export file" is planned.)
+
+### Tidy up
+
+```bash
+npx @ravi-labs/mindmap-mcp-server cleanup --dry-run   # preview
+npx @ravi-labs/mindmap-mcp-server cleanup             # apply
+```
+
+Removes automated/scheduled-task memories and collapses duplicate sessions.
+Anything you've **promoted** is always kept.
+
+## See your memory — the dashboard
+
+```bash
+npx @ravi-labs/mindmap-mcp-server dashboard   # http://127.0.0.1:7777
+```
+
+A local, read-only web UI (loopback-only) with three views:
+
+- **List** — memories grouped by 🔥/🌤️/❄️ tier, searchable; click one to read its
+  summary, key points, and **full discussion** (the complete conversation,
+  reconstructed on demand and rendered as Markdown).
+- **Tree** — 🧠 → source → project → discussion, with linked threads joined.
+- **Graph** — an auto-derived **topic map**: categories as hubs, sessions
+  connected by relatedness, with category filter chips and live search.
+
+Plus a **cleanliness score** that rewards a tidy, trusted memory — not a big one.
+
 ## Tools
 
 | Tool | What it does |
@@ -95,6 +168,7 @@ node dist/index.js install --local   # points clients at this checkout
 | `mindmap_search` | Read-only search across every tier and tool. |
 | `mindmap_list` | Browse memories with filters. |
 | `mindmap_get` | Fetch one memory's full content. |
+| `mindmap_transcript` | Reconstruct the **full original conversation** for a memory (Claude Code / Cursor / Copilot). |
 | `mindmap_promote` | Explicitly bless a memory as trusted (→ hot). |
 | `mindmap_update` | Trim / edit / retag — the human curation moment. |
 | `mindmap_link` | Connect related threads (the lightweight "map"). |

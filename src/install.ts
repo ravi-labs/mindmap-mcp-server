@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 
 const ENTRY_NAME = "mindmap";
+const PKG = "@ravi-labs/mindmap-mcp-server";
 
 interface ServerEntry {
   command: string;
@@ -174,10 +175,27 @@ export async function runInstall(argv: string[]): Promise<void> {
 
   console.log(`•  Claude Code: ${tryClaudeCode(entry, dryRun)}`);
 
-  console.log(
-    `\n${configured > 0 || true ? "Done." : "No clients configured."} Restart any running client to load Mind Map.`,
-  );
-  if (dryRun) console.log("Re-run without --dry-run to apply.");
+  if (dryRun) {
+    console.log("\n(dry run) Re-run without --dry-run to apply.");
+    return;
+  }
+
+  console.log(`
+✅ Mind Map is set up${configured ? ` for ${configured} client(s)` : ""}.
+
+What's next — 3 things:
+  1. Restart your AI client (Claude Code / Desktop / Cursor) so it loads Mind Map.
+  2. Bring your history in (optional):
+       npx ${PKG} import          ← past Claude Code + Cowork sessions
+  3. See your memory anytime:
+       npx ${PKG} dashboard       ← opens http://127.0.0.1:7777
+
+Using it day to day — just talk naturally:
+  • "Save this to mind map"       → captures the current context
+  • "Resume my work on <topic>"   → pulls it back in a fresh session
+  • "Show my mind map health"     → how tidy your memory is
+
+Full guide:  npx ${PKG} quickstart`);
 }
 
 export async function runUninstall(): Promise<void> {

@@ -12,6 +12,7 @@ import { type Config } from "./constants.js";
 import { computeTier, health, makeTrace, prune } from "./decay.js";
 import { formatList, formatThread, truncate } from "./format.js";
 import { searchEntries, type SearchFilters } from "./search.js";
+import { formatTranscript, getTranscript } from "./transcript.js";
 import {
   allEntries,
   deleteThread,
@@ -59,7 +60,9 @@ export function registerTools(server: McpServer): void {
     "mindmap_capture",
     {
       title: "Capture context",
-      description: `Silently save a portable context summary from the current session so it can be resumed later in any tool. This is the effortless 'capture' half of the loop — call it at the end of any discussion worth carrying forward. New captures start as 'captured' (warm tier); they become trusted 'promoted' memories the first time you resume them.
+      description: `Silently save a portable context summary from the current session so it can be resumed later in any tool. This is the effortless 'capture' half of the loop. New captures start as 'captured' (warm tier); they become trusted 'promoted' memories the first time you resume them.
+
+CALL THIS PROACTIVELY (you don't need to be asked) when: a substantive discussion is wrapping up; the user says they're done / switching tasks / "remember this" / "save this"; a key decision, plan, or conclusion was reached; or the user signals they'll continue later. Write the summary so a future session in a DIFFERENT tool could pick up with full context. Skip trivial one-off exchanges.
 
 Args:
   - title (string): short topic title
@@ -118,6 +121,8 @@ Returns: the created thread id and its formatted record.`,
     {
       title: "Resume context",
       description: `Find the best-matching saved context for a topic and return its summary to inject into the current (new) session — so you don't lose context across tools. This is the 'promote-on-reuse' moment: resuming a captured memory promotes it to a trusted (hot) memory and bumps its freshness. After reading, if anything is stale, call mindmap_update to trim it.
+
+CALL THIS PROACTIVELY (you don't need to be asked) at the START of a session when the user references prior work — e.g. "let's continue", "pick up where we left off", "the X project", or any topic that sounds like it may have history. Resuming first means you start with their real context instead of asking them to re-explain.
 
 Args:
   - query (string): topic or keywords describing what you were working on
@@ -256,6 +261,32 @@ Args: id (string). Returns: the full thread.`,
       const t = await getThread(id);
       if (!t) return text(`No memory with id "${id}".`);
       return result(formatThread(t), { id: t.id, title: t.title, status: t.status });
+    },
+  );
+
+  // -------------------------------------------------------------- transcript
+  server.registerTool(
+    "mindmap_transcript",
+    {
+      title: "Full discussion",
+      description: `Reconstruct and return the FULL original conversation for a memory (every user + assistant turn), read live from its source transcript. The summary is the distilled gist; this is the complete discussion when you need the detail.
+
+Only available for transcript-backed sources (Claude Code, Cursor, Copilot). Cowork / Claude desktop-app sessions saved no transcript, so this returns a notice instead.
+
+Args: id (string). Returns: the full discussion as turns, or why it's unavailable.`,
+      inputSchema: { id: z.string().describe("Thread id") },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ id }) => {
+      const t = await getThread(id);
+      if (!t) return text(`No memory with id "${id}".`);
+      const res = await getTranscript(t);
+      return result(formatTranscript(t, res), {
+        id: t.id,
+        available: res.available,
+        turns: res.turns.length,
+        truncated: res.truncated ?? false,
+      });
     },
   );
 

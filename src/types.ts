@@ -4,6 +4,22 @@
 export type Tier = "hot" | "warm" | "cold";
 
 /**
+ * A pointer back to a session's original transcript, so the full discussion can
+ * be reconstructed on demand. Only set for sources whose transcript is on disk
+ * (Claude Code CLI, Copilot, Cursor). Metadata-only sources (Cowork, Claude
+ * desktop-app) have no transcript and leave this undefined.
+ */
+export interface SourceRef {
+  kind: "claude-code-cli" | "copilot" | "cursor";
+  /** Absolute file path for cli/copilot sources. */
+  file?: string;
+  /** Session id (cli). */
+  sessionId?: string;
+  /** Composer id (cursor) — looked up in the global SQLite db. */
+  composerId?: string;
+}
+
+/**
  * Lifecycle status:
  *  - captured : silently saved, not yet vouched for by a human
  *  - promoted : pulled forward / blessed at least once -> trusted memory
@@ -34,6 +50,10 @@ export interface Thread {
   accessCount: number;
   promotedAt?: string;
   archivedAt?: string;
+  /** Origin id for imported memories (e.g. a Claude Code sessionId) — for dedup. */
+  sourceId?: string;
+  /** Pointer to the original transcript, for on-demand full-discussion view. */
+  sourceRef?: SourceRef;
 }
 
 /** Lightweight record kept in index.json for fast listing/search. */
@@ -49,6 +69,7 @@ export interface IndexEntry {
   updatedAt: string;
   lastAccessedAt: string;
   accessCount: number;
+  sourceId?: string;
 }
 
 export function toIndexEntry(t: Thread): IndexEntry {
@@ -64,5 +85,6 @@ export function toIndexEntry(t: Thread): IndexEntry {
     updatedAt: t.updatedAt,
     lastAccessedAt: t.lastAccessedAt,
     accessCount: t.accessCount,
+    ...(t.sourceId ? { sourceId: t.sourceId } : {}),
   };
 }
