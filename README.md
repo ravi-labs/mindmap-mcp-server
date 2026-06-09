@@ -93,6 +93,7 @@ Just talk naturally inside your AI tool — the model calls the right tool:
 - **"Save this to mind map"** → captures the current context
 - **"Resume my work on \<topic\>"** → pulls it back into a fresh session
 - **"What's in my mind map?"** / **"Show my mind map health"** → browse / score
+- **"What do you know about how I work?"** → reads your **persona** (see below)
 
 Run `npx @ravi-labs/mindmap-mcp-server quickstart` for the full getting-started guide.
 
@@ -142,22 +143,58 @@ npx @ravi-labs/mindmap-mcp-server cleanup             # apply
 Removes automated/scheduled-task memories and collapses duplicate sessions.
 Anything you've **promoted** is always kept.
 
+## Persona — a profile every tool can read
+
+Beyond individual discussions, Mind Map keeps a **persona**: a distilled,
+evolving profile of *how you work* — your stack, style, communication
+preferences, and constraints — so any tool can apply it and **stop re-asking the
+same setup questions.** It's separate from your discussion memories.
+
+- **Declared** facts: tell a tool *"I prefer concise, code-first answers"* and it
+  calls `mindmap_persona_set`. High confidence, yours, editable.
+- **Inferred** facts: `mindmap_persona_learn` derives recurring signals from your
+  existing memories. No LLM needed (keyword heuristic); richer if you enable one.
+- Tools call `mindmap_persona` at the start of a session and apply what's there.
+
+Add this to your client's instructions so it happens automatically:
+
+> At the start of a session call `mindmap_persona` and apply it. When I state a
+> durable preference, call `mindmap_persona_set`.
+
+## Optional: bring your own LLM key
+
+Mind Map runs **fully without any LLM** — every feature has a no-LLM path. If you
+*want* smarter persona inference and topic-graph labels, plug in your **own**
+provider (`anthropic`, `openai`, `google`, or local `ollama`):
+
+- Set it from the dashboard's **Persona** tab, or call `mindmap_llm`.
+- **Your API key is never stored.** Mind Map saves only the provider + model name
+  (`~/.mindmap/llm.json`); the key is read from your **environment** (e.g.
+  `ANTHROPIC_API_KEY`). Set it yourself and restart the server.
+- Everything is **opt-in and graceful** — no key, or a failed call, simply falls
+  back to the no-LLM path. Cost notes are rough estimates, never a bill.
+
 ## See your memory — the dashboard
 
 ```bash
 npx @ravi-labs/mindmap-mcp-server dashboard   # http://127.0.0.1:7777
 ```
 
-A local, read-only web UI (loopback-only) with three views:
+A local web UI (loopback-only) with four views:
 
 - **List** — memories grouped by 🔥/🌤️/❄️ tier, searchable; click one to read its
   summary, key points, and **full discussion** (the complete conversation,
-  reconstructed on demand and rendered as Markdown).
+  reconstructed on demand and rendered as Markdown). A 📜 badge + filter mark
+  memories that have a full transcript.
 - **Tree** — 🧠 → source → project → discussion, with linked threads joined.
 - **Graph** — an auto-derived **topic map**: categories as hubs, sessions
-  connected by relatedness, with category filter chips and live search.
+  connected by relatedness, with category filter chips and live search. An opt-in
+  **✨ LLM labels** button relabels the topic clusters using your own LLM.
+- **Persona** — view and edit your profile (see above), add preferences, run
+  inference, and configure the optional LLM — all from the browser.
 
-Plus a **cleanliness score** that rewards a tidy, trusted memory — not a big one.
+A **⟳ Sync** button imports new sessions on demand, and a **cleanliness score**
+rewards a tidy, trusted memory — not a big one.
 
 ## Tools
 
@@ -177,6 +214,11 @@ Plus a **cleanliness score** that rewards a tidy, trusted memory — not a big o
 | `mindmap_health` | Gamified cleanliness score (opt-in). |
 | `mindmap_tidy` | Batch of stalest memories to keep / trim / forget. |
 | `mindmap_config` | View / change decay windows and toggles. |
+| `mindmap_persona` | Read your persona — apply it at session start to stop re-asking. |
+| `mindmap_persona_set` | Record a durable preference (stack/style/constraints…). |
+| `mindmap_persona_forget` | Mute or delete a persona fact. |
+| `mindmap_persona_learn` | Infer persona facts from your memories (LLM-assisted if configured). |
+| `mindmap_llm` | Configure the optional BYO-key LLM (provider/model; key stays in your env). |
 
 ## How it stores things
 
@@ -184,7 +226,9 @@ Plus a **cleanliness score** that rewards a tidy, trusted memory — not a big o
 ~/.mindmap/
 ├── threads/<id>.json   # one file per memory (human-readable JSON)
 ├── index.json          # fast list/search index
-└── config.json         # tunable thresholds + gamification toggle
+├── config.json         # tunable thresholds + gamification toggle
+├── persona.json        # your evolving profile (declared + inferred facts)
+└── llm.json            # optional LLM provider + model (never your API key)
 ```
 
 Plain files you own and can inspect, grep, back up, or sync yourself. Tiers map
@@ -224,9 +268,9 @@ Other directions:
 
 - Auto-capture hooks per client so the "capture" step is invisible.
 - Embedding-based semantic recall (current search is token-overlap).
-- Richer graph view of linked threads.
+- LLM-assisted relatedness edges in the graph (labels already opt-in).
 - OAuth + per-user data isolation (only needed if a hosted tier ever happens).
 
 ## License
 
-MIT
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

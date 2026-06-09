@@ -1,0 +1,57 @@
+# Changelog
+
+All notable changes to this project are documented here. This project adheres to
+[Semantic Versioning](https://semver.org/).
+
+## [0.2.1] — 2026-06-10
+
+The **persona** release: Mind Map now remembers *how you work*, not just what you
+discussed — plus an optional bring-your-own-key LLM layer, all opt-in and
+local-first.
+
+### Added
+
+- **Persona layer** — a distilled, evolving profile (stack, style, communication,
+  constraints, workflow, goals) any tool can read to stop re-asking setup
+  questions. Facts are **declared** by you or **inferred** from your memories.
+  - New tools: `mindmap_persona`, `mindmap_persona_set`, `mindmap_persona_forget`,
+    `mindmap_persona_learn`.
+  - Stored in `~/.mindmap/persona.json` with confidence + scope (global/project);
+    inferred facts never override declared ones.
+- **Bring-your-own-key LLM (optional)** — vendor-neutral provider support
+  (`anthropic`, `openai`, `google`, local `ollama`) for richer persona inference
+  and graph labels.
+  - New tool: `mindmap_llm` to set provider/model.
+  - **Your API key is never stored** — Mind Map persists only the provider + model
+    name (`~/.mindmap/llm.json`); the key is read from your environment.
+  - Fully opt-in and graceful: no key (or a failed call) falls back to the no-LLM
+    path. Cost figures are clearly-labelled rough estimates, never billing.
+- **Dashboard: Persona tab** — view/add/forget persona facts, run inference, and
+  configure the optional LLM (provider/model only — no key field) from the browser.
+- **Dashboard: opt-in `✨ LLM labels`** in the Graph view — relabels TF-IDF topic
+  clusters with your LLM on a deliberate click; cached by cluster signature so it
+  doesn't re-bill; reverts to raw terms with a second click.
+- **Dashboard: `⟳ Sync`** button to import new sessions and refresh existing ones.
+- **Dashboard: 📜 transcript badge + filter** to find memories with a full
+  reconstructable discussion.
+
+### Fixed
+
+- Dashboard reindexes on startup so transcript flags and new index fields are
+  current.
+- LLM/persona form controls now match the dark theme (styled selects/inputs).
+- README license corrected to **Apache-2.0** (matches `LICENSE`/`package.json`).
+
+## [0.2.0]
+
+- Multi-source import (Claude Code CLI, Cowork, VS Code Copilot, Cursor) with
+  per-source adapters; Cursor read via Node's built-in SQLite (Node 22.5+).
+- On-demand full-discussion reconstruction from source transcripts.
+- Topic graph (TF-IDF categories + relatedness edges) and full-discussion view
+  with a dependency-free Markdown renderer.
+- Dashboard List / Tree / Graph views.
+
+## [0.1.0]
+
+- Initial release: local-first MCP memory & context-handoff server — capture /
+  resume loop, promote-on-reuse, tiered decay, and the gamified cleanliness score.

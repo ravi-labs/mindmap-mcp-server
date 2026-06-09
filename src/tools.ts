@@ -11,6 +11,21 @@ import { z } from "zod";
 import { type Config } from "./constants.js";
 import { computeTier, health, makeTrace, prune } from "./decay.js";
 import { formatList, formatThread, truncate } from "./format.js";
+import {
+  allFacts,
+  forgetFact,
+  inferWithLLM,
+  renderPersona,
+  setFact,
+  type PersonaCategory,
+} from "./persona.js";
+import {
+  estimateCost,
+  PROVIDER_NAMES,
+  setSettings,
+  status as llmStatus,
+  type ProviderName,
+} from "./llm.js";
 import { searchEntries, type SearchFilters } from "./search.js";
 import { formatTranscript, getTranscript } from "./transcript.js";
 import {
@@ -565,6 +580,156 @@ Returns: the effective config.`,
         `- gamification: ${cfg.gamification ? "on" : "off"}`,
       ].join("\n");
       return result(body, { ...cfg });
+    },
+  );
+
+  // ----------------------------------------------------------------- persona
+  const personaCategory = z.enum([
+    "identity",
+    "stack",
+    "style",
+    "communication",
+    "constraints",
+    "workflow",
+    "goals",
+  ]);
+
+  server.registerTool(
+    "mindmap_persona",
+    {
+      title: "Get user persona",
+      description: `Return the user's persona — a distilled profile of how they work (stack, style, communication, constraints), so you can make aligned defaults and AVOID re-asking things they've already established.
+
+CALL THIS PROACTIVELY at the start of a session before asking the user setup-style questions (their stack, preferences, conventions). Apply high-confidence facts silently; only ask when something needed isn't covered.
+
+Args:
+  - project (string, optional): include preferences scoped to this project on top of global ones.
+Returns: an "About this user" block + fact count.`,
+      inputSchema: { project: z.string().optional().describe("Current project name for scoped prefs") },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ project }) => {
+      const r = await renderPersona({ project });
+      return result(r.text, { count: r.count });
+    },
+  );
+
+  server.registerTool(
+    "mindmap_persona_set",
+    {
+      title: "Record a user preference",
+      description: `Save a durable preference about how the user works, so future sessions don't re-ask. Use this when the user states a lasting preference — "I prefer X", "always Y", "never Z", "I'm on macOS", "we use Postgres". (For saving a *discussion*, use mindmap_capture instead — this is for standing preferences.)
+
+Args:
+  - text (string): the preference, e.g. "Prefers concise, code-first answers"
+  - category: identity | stack | style | communication | constraints | workflow | goals
+  - polarity ('prefer'|'avoid'|'fact'): default 'prefer'
+  - project (string, optional): scope to one project instead of global
+Returns: the saved fact.`,
+      inputSchema: {
+        text: z.string().min(2).describe("The preference statement"),
+        category: personaCategory.describe("Which dimension this preference is about"),
+        polarity: z.enum(["prefer", "avoid", "fact"]).default("prefer").describe("prefer / avoid / fact"),
+        project: z.string().optional().describe("Scope to a project (default: global)"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ text, category, polarity, project }) => {
+      const f = await setFact({
+        text,
+        category: category as PersonaCategory,
+        polarity,
+        scope: project ? `project:${project}` : "global",
+      });
+      return result(`Got it — recorded: "${f.text}" (${f.category}, ${f.scope}).`, {
+        id: f.id,
+        confidence: f.confidence,
+      });
+    },
+  );
+
+  server.registerTool(
+    "mindmap_persona_forget",
+    {
+      title: "Forget a preference",
+      description: `Remove or mute a persona fact (e.g. it's wrong or out of date). Get ids from mindmap_persona. Default mutes (recoverable); hard=true deletes.
+
+Args: id (string), hard (boolean, default false). Returns: confirmation.`,
+      inputSchema: {
+        id: z.string().describe("Persona fact id"),
+        hard: z.boolean().default(false).describe("Permanently delete instead of mute"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    async ({ id, hard }) => {
+      const ok = await forgetFact(id, hard);
+      return result(ok ? `${hard ? "Deleted" : "Muted"} persona fact ${id}.` : `No fact ${id}.`, {
+        id,
+        ok,
+      });
+    },
+  );
+
+  server.registerTool(
+    "mindmap_persona_learn",
+    {
+      title: "Infer persona from memory",
+      description: `Derive persona facts from your existing memories. If you've configured an LLM (mindmap_llm), it extracts richer facts — style, constraints, workflow; otherwise it runs a no-LLM keyword heuristic over your stack/tools. Either way, inferred facts get lower confidence than declared ones and never override what you've explicitly set.
+
+Args: none. Returns: how many facts were added/updated and which path ran.`,
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async () => {
+      const r = await inferWithLLM();
+      const total = (await allFacts()).filter((f) => f.status === "active").length;
+      return result(
+        `Inferred from your memories (${r.usedLLM ? "LLM-assisted" : "no-LLM heuristic"}): +${r.added} new, ${r.updated} refreshed. ${total} active persona facts now.`,
+        r,
+      );
+    },
+  );
+
+  // --------------------------------------------------------------- byo-key LLM
+  server.registerTool(
+    "mindmap_llm",
+    {
+      title: "Configure optional LLM (BYO key)",
+      description: `Mind Map runs fully WITHOUT an LLM. This is opt-in: plug in your OWN provider to unlock smarter features (LLM-assisted persona inference, richer summaries).
+
+Security: Mind Map stores only the provider + model name. It NEVER stores your API key — the key is read from your environment (ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY; ollama needs none). Set the env var yourself.
+
+Args (all optional — omit all to just see status):
+  - provider: none | anthropic | openai | google | ollama
+  - model: override the default model
+  - baseUrl: for ollama / self-hosted (default http://localhost:11434)
+Returns: current provider/model, whether it's ready, and a rough cost note.`,
+      inputSchema: {
+        provider: z.enum(["none", "anthropic", "openai", "google", "ollama"]).optional()
+          .describe("LLM provider, or 'none' to disable"),
+        model: z.string().optional().describe("Model name override"),
+        baseUrl: z.string().optional().describe("Base URL for ollama / self-hosted"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ provider, model, baseUrl }) => {
+      if (provider || model || baseUrl !== undefined) {
+        await setSettings({
+          ...(provider ? { provider: provider as ProviderName } : {}),
+          ...(model ? { model } : {}),
+          ...(baseUrl !== undefined ? { baseUrl } : {}),
+        });
+      }
+      const st = await llmStatus();
+      const est = estimateCost(st.provider, 1500, 400); // a typical persona-infer call
+      const valid = PROVIDER_NAMES.join(", ");
+      const body = [
+        `**LLM:** ${st.provider}${st.provider === "none" ? "" : ` (${st.model})`}`,
+        `**Ready:** ${st.ready ? "yes" : "no"} — ${st.note}`,
+        st.provider === "none" ? "" : `**Est. per call:** ${est}`,
+        `_Providers: ${valid}. Key comes from your environment; Mind Map never stores it._`,
+      ].filter(Boolean).join("\n\n");
+      return result(body, st);
     },
   );
 }

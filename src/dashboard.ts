@@ -9,12 +9,32 @@
  * discussions joined by dashed edges.
  */
 
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
 import express from "express";
 
 import { DATA_DIR } from "./constants.js";
 import { health } from "./decay.js";
 import { buildGraph } from "./graph.js";
-import { allEntries, getConfig, getThread } from "./store.js";
+import { importOptions, importSessions } from "./import.js";
+import {
+  complete,
+  getSettings,
+  isReady as llmReady,
+  setSettings,
+  status as llmStatus,
+  type ProviderName,
+} from "./llm.js";
+import {
+  allFacts,
+  forgetFact,
+  inferWithLLM,
+  renderPersona,
+  setFact,
+  type PersonaCategory,
+} from "./persona.js";
+import { allEntries, getConfig, getThread, reindex } from "./store.js";
 import { getTranscript } from "./transcript.js";
 
 const HOST = "127.0.0.1";
@@ -41,12 +61,18 @@ const PAGE = `<!doctype html>
   .bar > i { display:block; height:100%; background:linear-gradient(90deg,var(--cold),var(--accent)); }
   .counts { color:var(--muted); display:flex; gap:13px; flex-wrap:wrap; font-size:13px; }
   .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; }
-  .tabs { display:flex; gap:6px; margin-left:auto; }
+  .syncbtn { margin-left:auto; background:var(--panel2); color:var(--text); border:1px solid var(--line); padding:6px 14px; border-radius:8px; cursor:pointer; font-size:13px; }
+  .syncbtn:hover:not(:disabled) { border-color:var(--accent); }
+  .syncbtn:disabled { opacity:.6; cursor:default; }
+  .syncstatus { color:var(--muted); font-size:12px; min-width:0; }
+  .tabs { display:flex; gap:6px; }
   .tabs button { background:var(--panel2); color:var(--muted); border:1px solid var(--line); padding:6px 14px; border-radius:8px; cursor:pointer; font-size:13px; }
   .tabs button.active { color:var(--text); border-color:var(--accent); }
   main { display:grid; grid-template-columns:minmax(320px,1fr) 1.4fr; height:calc(100vh - 63px); }
   #left { border-right:1px solid var(--line); overflow:auto; padding:16px; }
-  #search { width:100%; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--text); margin-bottom:14px; }
+  #search { width:100%; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--text); margin-bottom:8px; }
+  .txfilter { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; margin-bottom:14px; cursor:pointer; }
+  .txbadge { font-size:11px; opacity:.85; }
   .tier-h { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:16px 0 8px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:11px 13px; margin-bottom:8px; cursor:pointer; }
   .card:hover { border-color:var(--accent); }
@@ -87,6 +113,8 @@ const PAGE = `<!doctype html>
   #chips { display:flex; gap:6px; flex-wrap:wrap; max-width:calc(100% - 260px); }
   .chip { font-size:12px; padding:3px 10px; border-radius:20px; border:1px solid var(--line); background:rgba(30,34,43,.92); color:var(--muted); cursor:pointer; }
   .chip.active { color:#fff; border-color:var(--accent); background:rgba(124,92,255,.25); }
+  .chip.llmlabel { background:rgba(124,92,255,.12); border-color:var(--accent); color:#cfc6ff; }
+  .chip.llmlabel.active { background:rgba(124,92,255,.35); color:#fff; }
   #fg { width:100%; height:calc(100vh - 63px); display:block; cursor:grab; background:radial-gradient(circle at 50% 40%, #14171d 0%, var(--bg) 70%); }
   #fg.grabbing { cursor:grabbing; }
   .gedge { stroke:#2a2f3a; }
@@ -102,6 +130,37 @@ const PAGE = `<!doctype html>
   svg text.dim { fill:var(--muted); }
   .leaf { cursor:pointer; }
   .leaf:hover circle { stroke:var(--accent); stroke-width:2; }
+  #personaWrap { display:none; grid-column:1 / -1; overflow:auto; padding:26px 30px; }
+  #personaWrap { grid-template-columns:1.6fr 1fr; gap:30px; }
+  .pcol { min-width:0; }
+  .pside { border-left:1px solid var(--line); padding-left:30px; }
+  .phead { display:flex; align-items:baseline; gap:14px; }
+  .phead h2 { margin:0; }
+  .pll { font-size:12px; color:var(--muted); }
+  .pll.on { color:var(--cold); }
+  .pmuted { color:var(--muted); font-size:13px; }
+  .pcat { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--accent); margin:20px 0 8px; }
+  .pfact { display:flex; align-items:center; gap:10px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 13px; margin-bottom:8px; }
+  .pfact .ptext { flex:1; min-width:0; }
+  .pfact .psrc { font-size:10px; padding:1px 8px; border-radius:20px; border:1px solid var(--line); color:var(--muted); }
+  .pfact .psrc.declared { color:#fff; border-color:var(--accent); }
+  .pconf { width:46px; height:6px; border-radius:4px; background:var(--panel2); overflow:hidden; flex:none; }
+  .pconf > i { display:block; height:100%; background:linear-gradient(90deg,var(--cold),var(--accent)); }
+  .pforget { background:none; border:none; color:var(--muted); cursor:pointer; font-size:15px; flex:none; padding:2px 4px; }
+  .pforget:hover { color:var(--hot); }
+  #pform input, #pform select, #llmform input, #llmform select { width:100%; padding:9px 11px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--text); margin-bottom:8px; font:inherit; }
+  #pform input::placeholder, #llmform input::placeholder { color:var(--muted); }
+  #pform select, #llmform select { -webkit-appearance:none; appearance:none; padding-right:30px; cursor:pointer; background-color:var(--panel); background-repeat:no-repeat; background-position:right 10px center; background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8" fill="none" stroke="%239aa3b2" stroke-width="1.6"><path d="M1 1l5 5 5-5"/></svg>'); }
+  #pform select:focus, #pform input:focus, #llmform select:focus, #llmform input:focus { outline:none; border-color:var(--accent); }
+  #pform .pbtn, #llmform .pbtn { width:100%; margin-top:2px; }
+  .prow { display:flex; gap:8px; }
+  .prow select, .prow input { flex:1; min-width:0; }
+  .pbtn { background:var(--panel2); color:var(--text); border:1px solid var(--line); padding:9px 16px; border-radius:8px; cursor:pointer; font-size:13px; }
+  .pbtn:hover { border-color:var(--accent); }
+  .pbtn.primary { border-color:var(--accent); }
+  .pbtn:disabled { opacity:.6; cursor:default; }
+  .pdiv { border:none; border-top:1px solid var(--line); margin:22px 0; }
+  .pempty { color:var(--muted); padding:30px 0; }
 </style>
 </head>
 <body>
@@ -109,15 +168,19 @@ const PAGE = `<!doctype html>
   <h1>🧠 Mind <span>Map</span></h1>
   <div class="score"><div class="bar"><i id="scoreBar"></i></div><strong id="scoreNum">–</strong><span style="color:var(--muted)">clean</span></div>
   <div class="counts" id="counts"></div>
+  <button id="syncBtn" class="syncbtn" onclick="syncImport()" title="Import new sessions and refresh existing ones">⟳ Sync</button>
+  <span id="syncStatus" class="syncstatus"></span>
   <div class="tabs">
     <button id="tabList" class="active" onclick="showTab('list')">List</button>
     <button id="tabTree" onclick="showTab('tree')">Tree</button>
     <button id="tabGraph" onclick="showTab('graph')">Graph</button>
+    <button id="tabPersona" onclick="showTab('persona')">Persona</button>
   </div>
 </header>
 <main>
   <div id="left">
     <input id="search" placeholder="Search memories…" oninput="render()" />
+    <label class="txfilter"><input type="checkbox" id="txOnly" onchange="render()" /> 📜 with full transcript only</label>
     <div id="listWrap"></div>
   </div>
   <div id="right"><div id="detail" class="empty">Select a memory to view its context.</div></div>
@@ -125,9 +188,66 @@ const PAGE = `<!doctype html>
   <div id="graphWrap">
     <div id="gtools">
       <input id="gsearch" placeholder="Search the graph…" oninput="applyFilter()" />
+      <button id="llmLabelBtn" class="chip llmlabel" onclick="toggleLlmLabels()" title="Relabel topic clusters using your LLM (opt-in)">✨ LLM labels</button>
       <div id="chips"></div>
     </div>
     <svg id="fg"><g id="viewport"></g></svg>
+  </div>
+  <div id="personaWrap">
+    <div class="pcol">
+      <div class="phead">
+        <h2>About you</h2>
+        <span id="llmStatus" class="pll"></span>
+      </div>
+      <p class="pmuted">A profile any AI tool can read so it stops re-asking how you work. Declared facts are yours; <em>inferred</em> ones are learned from your memories.</p>
+      <div id="personaFacts"></div>
+    </div>
+    <div class="pcol pside">
+      <h3>Add a preference</h3>
+      <form id="pform" onsubmit="return addFact(event)">
+        <input id="pfText" placeholder="e.g. Prefers concise, code-first answers" required />
+        <div class="prow">
+          <select id="pfCat">
+            <option value="identity">identity</option>
+            <option value="stack">stack</option>
+            <option value="style">style</option>
+            <option value="communication">communication</option>
+            <option value="constraints">constraints</option>
+            <option value="workflow">workflow</option>
+            <option value="goals">goals</option>
+          </select>
+          <select id="pfPol">
+            <option value="prefer">prefer</option>
+            <option value="avoid">avoid</option>
+            <option value="fact">fact</option>
+          </select>
+        </div>
+        <button type="submit" class="pbtn primary">Save preference</button>
+      </form>
+      <hr class="pdiv" />
+      <h3>LLM <span class="pmuted" style="font-weight:400">(optional)</span></h3>
+      <p class="pmuted">Plug in your own provider for richer inference. Pick it here; the API key stays in your environment — Mind Map never stores it.</p>
+      <form id="llmform" onsubmit="return saveLlm(event)">
+        <div class="prow">
+          <select id="llmProvider" onchange="onProviderChange()">
+            <option value="none">none (off)</option>
+            <option value="anthropic">anthropic</option>
+            <option value="openai">openai</option>
+            <option value="google">google</option>
+            <option value="ollama">ollama (local)</option>
+          </select>
+          <input id="llmModel" placeholder="model (blank = default)" />
+        </div>
+        <input id="llmBaseUrl" placeholder="base URL (ollama / self-hosted)" style="display:none" />
+        <button type="submit" class="pbtn primary">Save LLM settings</button>
+      </form>
+      <div id="llmHint" class="pmuted" style="margin-top:10px"></div>
+      <hr class="pdiv" />
+      <h3>Learn from memories</h3>
+      <p class="pmuted">Scan your memories for recurring signals. Uses your LLM if configured above, else a no-LLM heuristic.</p>
+      <button class="pbtn" onclick="learnPersona()" id="learnBtn">✨ Learn now</button>
+      <span id="learnStatus" class="pmuted"></span>
+    </div>
   </div>
 </main>
 <script>
@@ -201,16 +321,18 @@ function render(){ if(VIEW==='graph') return; if(VIEW==='tree') renderTree(filte
 
 function renderList(items){
   var wrap = document.getElementById('listWrap');
-  if(items.length===0){ wrap.innerHTML='<div class="empty">No memories yet.<br>Try <code>import</code> to bring in past sessions.</div>'; return; }
+  if(document.getElementById('txOnly').checked) items = items.filter(function(t){return t.hasTranscript;});
+  if(items.length===0){ wrap.innerHTML='<div class="empty">No matching memories.</div>'; return; }
   var html='';
   ['hot','warm','cold'].forEach(function(tier){
     var g = items.filter(function(t){return t.tier===tier;});
     if(!g.length) return;
     html += '<div class="tier-h">'+TIER[tier].i+' '+tier+' ('+g.length+')</div>';
     g.forEach(function(t){
+      var tx = t.hasTranscript ? ' <span class="txbadge" title="Full discussion available">📜</span>' : '';
       html += '<div class="card" data-id="'+t.id+'">'+
         '<div class="t">'+(t.status==='promoted'?'★ ':'')+esc(t.title)+
-        '<span class="badge" style="border-color:'+TIER[tier].c+'">'+esc(t.source)+'</span></div>'+
+        '<span class="badge" style="border-color:'+TIER[tier].c+'">'+esc(t.source)+'</span>'+tx+'</div>'+
         '<div class="m">'+esc(t.trace||'')+'</div></div>';
     });
   });
@@ -224,6 +346,11 @@ function open_(id){
     var kp = (t.keyPoints||[]).map(function(p){return '<li>'+esc(p)+'</li>';}).join('');
     var tags = (t.tags||[]).map(function(x){return '<span class="tag">#'+esc(x)+'</span>';}).join('');
     var links = (t.links||[]).length ? '<p class="meta">🔗 Linked: '+t.links.length+' discussion(s)</p>' : '';
+    // Only offer "full discussion" when a transcript actually exists on disk
+    // (imported Claude Code / Cursor / Copilot). Captures, Cowork, and desktop
+    // sources have no transcript — showing a dead button just confuses.
+    var ref = t.sourceRef || {};
+    var hasTranscript = ref.kind==='claude-code-cli' || ref.kind==='cursor' || ref.kind==='copilot';
     var d = document.getElementById('detail'); d.className='';
     d.innerHTML =
       '<h2>'+TIER[t.tier].i+' '+esc(t.title)+'</h2>'+
@@ -231,9 +358,8 @@ function open_(id){
       '<div>'+tags+'</div>'+
       '<h3>Summary</h3><div class="md">'+md(t.summary||'')+'</div>'+
       (kp?'<h3>Key points</h3><ul>'+kp+'</ul>':'')+links+
-      '<button id="fullBtn" class="fullbtn">📜 View full discussion</button>'+
-      '<div id="transcript"></div>';
-    document.getElementById('fullBtn').onclick = function(){ loadTranscript(t.id); };
+      (hasTranscript ? '<button id="fullBtn" class="fullbtn">📜 View full discussion</button><div id="transcript"></div>' : '');
+    if(hasTranscript) document.getElementById('fullBtn').onclick = function(){ loadTranscript(t.id); };
   });
 }
 
@@ -323,12 +449,112 @@ function showTab(which){
   document.getElementById('tabList').className = which==='list'?'active':'';
   document.getElementById('tabTree').className = which==='tree'?'active':'';
   document.getElementById('tabGraph').className = which==='graph'?'active':'';
+  document.getElementById('tabPersona').className = which==='persona'?'active':'';
   document.getElementById('left').style.display = which==='list'?'':'none';
   document.getElementById('right').style.display = which==='list'?'':'none';
   document.getElementById('treeWrap').style.display = which==='tree'?'block':'none';
   document.getElementById('graphWrap').style.display = which==='graph'?'block':'none';
+  document.getElementById('personaWrap').style.display = which==='persona'?'grid':'none';
   if(which==='graph'){ if(!SIM.built) loadGraph(); }
+  else if(which==='persona'){ loadPersona(); }
   else render();
+}
+
+// ---- Persona view ---------------------------------------------------------
+var PCAT_ORDER=['identity','stack','constraints','style','communication','workflow','goals'];
+var LLM_KEYENV={anthropic:'ANTHROPIC_API_KEY',openai:'OPENAI_API_KEY',google:'GOOGLE_API_KEY',ollama:null,none:null};
+function loadPersona(){
+  fetch('/api/persona').then(function(r){return r.json();}).then(function(d){
+    var ll=document.getElementById('llmStatus');
+    ll.textContent = d.llm.ready ? ('LLM: '+d.llm.provider+' ✓') : ('LLM: off');
+    ll.className = 'pll'+(d.llm.ready?' on':'');
+    ll.title = d.llm.note||'';
+    // prefill the LLM form from stored settings
+    var s=d.settings||{provider:'none',model:''};
+    document.getElementById('llmProvider').value=s.provider||'none';
+    document.getElementById('llmModel').value=s.model||'';
+    document.getElementById('llmBaseUrl').value=s.baseUrl||'';
+    syncLlmForm(d.llm);
+    renderPersonaFacts(d.facts||[]);
+  });
+}
+function syncLlmForm(llm){
+  var prov=document.getElementById('llmProvider').value;
+  document.getElementById('llmBaseUrl').style.display = prov==='ollama' ? '' : 'none';
+  var hint=document.getElementById('llmHint');
+  if(prov==='none'){ hint.innerHTML='LLM features are off. Pick a provider to enable LLM-assisted inference.'; return; }
+  if(prov==='ollama'){ hint.innerHTML='Local model — no API key. Make sure <code>ollama serve</code> is running.'+(llm?(' '+(llm.ready?'✓ reachable.':'')):''); return; }
+  var env=LLM_KEYENV[prov];
+  var ready = llm && llm.ready && llm.provider===prov;
+  hint.innerHTML = ready
+    ? ('✓ <code>'+env+'</code> detected — Mind Map is using your key from the environment.')
+    : ('Set <code>'+env+'</code> in your environment, then <strong>restart the MCP server</strong> so it picks up the key. Mind Map never stores it.');
+}
+function onProviderChange(){ syncLlmForm(null); }
+function saveLlm(ev){
+  ev.preventDefault();
+  var body={ provider:document.getElementById('llmProvider').value,
+             model:document.getElementById('llmModel').value.trim(),
+             baseUrl:document.getElementById('llmBaseUrl').value.trim() };
+  fetch('/api/llm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(d){
+      var ll=document.getElementById('llmStatus');
+      ll.textContent = d.llm.ready ? ('LLM: '+d.llm.provider+' ✓') : ('LLM: off');
+      ll.className='pll'+(d.llm.ready?' on':''); ll.title=d.llm.note||'';
+      document.getElementById('llmModel').value=(d.settings&&d.settings.model)||'';
+      syncLlmForm(d.llm);
+    });
+  return false;
+}
+function renderPersonaFacts(facts){
+  var box=document.getElementById('personaFacts');
+  var active=facts.filter(function(f){return f.status==='active';});
+  if(!active.length){ box.innerHTML='<div class="pempty">No persona facts yet. Add a preference, or click “Learn now”.</div>'; return; }
+  var byCat={};
+  active.forEach(function(f){ (byCat[f.category]=byCat[f.category]||[]).push(f); });
+  var html='';
+  PCAT_ORDER.forEach(function(cat){
+    var g=byCat[cat]; if(!g) return;
+    g.sort(function(a,b){return b.confidence-a.confidence;});
+    html += '<div class="pcat">'+cat+'</div>';
+    g.forEach(function(f){
+      var pol = f.polarity==='avoid'?'⊘ ':(f.polarity==='prefer'?'✓ ':'');
+      var scope = (f.scope&&f.scope.indexOf('project:')===0) ? ' <span class="psrc">'+esc(f.scope.slice(8))+'</span>' : '';
+      html += '<div class="pfact">'+
+        '<div class="ptext">'+pol+esc(f.text)+scope+'</div>'+
+        '<span class="psrc '+esc(f.source)+'">'+esc(f.source)+'</span>'+
+        '<div class="pconf" title="confidence '+Math.round(f.confidence*100)+'%"><i style="width:'+Math.round(f.confidence*100)+'%"></i></div>'+
+        '<button class="pforget" title="Forget this" data-id="'+esc(f.id)+'">✕</button>'+
+      '</div>';
+    });
+  });
+  box.innerHTML=html;
+  box.querySelectorAll('.pforget').forEach(function(b){
+    b.addEventListener('click',function(){ forgetPersonaFact(b.getAttribute('data-id')); });
+  });
+}
+function addFact(ev){
+  ev.preventDefault();
+  var text=document.getElementById('pfText').value.trim();
+  if(!text) return false;
+  var body={ text:text, category:document.getElementById('pfCat').value, polarity:document.getElementById('pfPol').value };
+  fetch('/api/persona',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(){ document.getElementById('pfText').value=''; loadPersona(); });
+  return false;
+}
+function forgetPersonaFact(id){
+  fetch('/api/persona/forget',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})
+    .then(function(r){return r.json();}).then(function(){ loadPersona(); });
+}
+function learnPersona(){
+  var btn=document.getElementById('learnBtn'), st=document.getElementById('learnStatus');
+  btn.disabled=true; btn.textContent='✨ Learning…'; st.textContent='';
+  fetch('/api/persona/learn',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    btn.disabled=false; btn.textContent='✨ Learn now';
+    st.textContent='  '+(d.usedLLM?'LLM-assisted':'heuristic')+': +'+d.added+' new, '+d.updated+' refreshed';
+    loadPersona();
+    setTimeout(function(){ st.textContent=''; }, 8000);
+  }).catch(function(){ btn.disabled=false; btn.textContent='✨ Learn now'; st.textContent='  failed'; });
 }
 
 // ---- Topic graph (force-directed) ----------------------------------------
@@ -341,6 +567,8 @@ var activeCat=null;
 function svgEl(tag,attrs){ var e=document.createElementNS(SVGNS,tag); for(var k in attrs) e.setAttribute(k,attrs[k]); return e; }
 
 function loadGraph(){
+  LABELS=null; // raw TF-IDF labels until the user opts in again
+  var lb=document.getElementById('llmLabelBtn'); if(lb){ lb.className='chip llmlabel'; lb.textContent='✨ LLM labels'; }
   fetch('/api/graph').then(function(r){return r.json();}).then(function(g){
     G=g; buildSim(); buildSvg(); renderChips(); startSim();
   });
@@ -412,8 +640,29 @@ function paint(){
 
 function renderChips(){
   var box=document.getElementById('chips');
-  box.innerHTML=G.categories.map(function(c){ return '<span class="chip" data-cat="'+c.term+'">'+c.term+' ('+c.count+')</span>'; }).join('');
+  box.innerHTML=G.categories.map(function(c){ return '<span class="chip" data-cat="'+c.term+'">'+esc(labelFor(c.term))+' ('+c.count+')</span>'; }).join('');
   box.querySelectorAll('.chip').forEach(function(ch){ ch.addEventListener('click',function(){ toggleCat(ch.getAttribute('data-cat'), ch); }); });
+}
+
+// ---- Opt-in LLM cluster labels (graph). Nothing here runs until clicked. ---
+var LABELS=null; // term -> LLM label, when active
+function labelFor(term){ return (LABELS && LABELS[term]) ? LABELS[term] : term; }
+function toggleLlmLabels(){
+  var btn=document.getElementById('llmLabelBtn');
+  if(LABELS){ LABELS=null; btn.className='chip llmlabel'; btn.textContent='✨ LLM labels'; applyLabels(); return; }
+  btn.textContent='✨ Labeling…';
+  fetch('/api/graph/relabel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    if(!d.ok){ btn.className='chip llmlabel'; btn.textContent='⚠ enable LLM'; btn.title=d.reason||''; setTimeout(function(){ btn.textContent='✨ LLM labels'; },4000); return; }
+    LABELS=d.labels||{}; btn.className='chip llmlabel active'; btn.textContent='✨ LLM labels'+(d.cached?'':' ✓'); btn.title=d.cached?'cached':'freshly generated'; applyLabels();
+  }).catch(function(){ btn.className='chip llmlabel'; btn.textContent='✨ LLM labels'; });
+}
+function applyLabels(){
+  document.querySelectorAll('#chips .chip').forEach(function(ch){
+    var term=ch.getAttribute('data-cat'); var cat=null;
+    for(var i=0;i<G.categories.length;i++){ if(G.categories[i].term===term){ cat=G.categories[i]; break; } }
+    ch.textContent = labelFor(term)+' ('+(cat?cat.count:'')+')';
+  });
+  SIM.nodes.forEach(function(n){ if(n.kind==='cat'&&n.el){ var t=n.el.querySelector('text'); if(t) t.textContent=labelFor(n.label); }});
 }
 function toggleCat(term,ch){
   activeCat = activeCat===term ? null : term;
@@ -452,6 +701,21 @@ function initGraphInput(){
 }
 function openNode(n){ if(n.kind==='cat'){ toggleCat(n.label); } else { open_(n.id); } }
 
+function syncImport(){
+  var btn=document.getElementById('syncBtn'), st=document.getElementById('syncStatus');
+  btn.disabled=true; btn.textContent='⟳ Syncing…'; st.textContent='reading your sessions…';
+  fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reimport:true})})
+    .then(function(r){return r.json();}).then(function(d){
+      btn.disabled=false; btn.textContent='⟳ Sync';
+      if(d.error){ st.textContent='Sync failed'; return; }
+      st.textContent='✓ imported '+d.imported+', refreshed '+d.updated;
+      SIM.built=false;            // graph data is now stale — rebuild on next open
+      load();                     // refresh list/tree + counts
+      if(VIEW==='graph') loadGraph();
+      setTimeout(function(){ st.textContent=''; }, 6000);
+    }).catch(function(){ btn.disabled=false; btn.textContent='⟳ Sync'; st.textContent='Sync failed'; });
+}
+
 // Event delegation — survives innerHTML re-renders, and avoids quoting bugs.
 document.getElementById('listWrap').addEventListener('click', function(e){
   var c = e.target.closest && e.target.closest('.card');
@@ -470,9 +734,22 @@ setInterval(load, 5000);
 </html>`;
 
 export async function runDashboard(): Promise<void> {
+  await reindex(); // refresh the index so transcript flags etc. are current
   const app = express();
+  app.use(express.json());
 
   app.get("/", (_req, res) => res.type("html").send(PAGE));
+
+  // Run import/reimport from the UI (loopback-only server, so no auth needed).
+  app.post("/api/import", async (req, res) => {
+    try {
+      const reimport = req.body?.reimport !== false; // default: sync = import new + refresh existing
+      const result = await importSessions(importOptions({ source: "all", reimport }));
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
 
   app.get("/api/data", async (_req, res) => {
     try {
@@ -492,6 +769,131 @@ export async function runDashboard(): Promise<void> {
     try {
       const entries = await allEntries();
       res.json(buildGraph(entries));
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // Opt-in: relabel the TF-IDF topic clusters with the user's LLM. Deliberate
+  // (button-triggered) only — never part of the default graph build. Cached by
+  // cluster signature so repeated clicks don't re-bill.
+  app.post("/api/graph/relabel", async (_req, res) => {
+    try {
+      if (!(await llmReady())) {
+        res.json({ ok: false, reason: "LLM is off. Enable it in the Persona tab first." });
+        return;
+      }
+      const g = buildGraph(await allEntries());
+      if (!g.categories.length) {
+        res.json({ ok: true, labels: {}, usedLLM: false });
+        return;
+      }
+      const signature = g.categories.map((c) => c.term).sort().join("|");
+      const cacheFile = path.join(DATA_DIR, "graph-labels.json");
+      try {
+        const cached = JSON.parse(await fs.readFile(cacheFile, "utf8")) as {
+          signature: string;
+          labels: Record<string, string>;
+        };
+        if (cached.signature === signature) {
+          res.json({ ok: true, labels: cached.labels, usedLLM: false, cached: true });
+          return;
+        }
+      } catch {
+        /* no cache yet */
+      }
+      // Gather a few representative titles per cluster for context.
+      const samples = new Map<string, string[]>();
+      for (const c of g.categories) samples.set(c.term, []);
+      for (const n of g.nodes) {
+        for (const t of n.cats ?? []) {
+          const arr = samples.get(t);
+          if (arr && arr.length < 6) arr.push(n.title);
+        }
+      }
+      const clusters = g.categories
+        .map((c) => `- key "${c.term}": ${(samples.get(c.term) ?? []).map((t) => t.slice(0, 60)).join("; ")}`)
+        .join("\n");
+      const sys =
+        "You name topic clusters from a personal knowledge graph. For each cluster key, " +
+        "produce a concise 2-4 word human-readable label that captures the theme of its sample titles. " +
+        "Output ONLY a JSON object mapping each original key string to its label string.";
+      const out = await complete(`Clusters:\n${clusters}\n\nReturn the JSON object.`, {
+        system: sys,
+        maxTokens: 700,
+      });
+      const lo = out.indexOf("{");
+      const hi = out.lastIndexOf("}");
+      const labels = lo >= 0 && hi > lo ? (JSON.parse(out.slice(lo, hi + 1)) as Record<string, string>) : {};
+      await fs.writeFile(cacheFile, JSON.stringify({ signature, labels }, null, 2), "utf8");
+      res.json({ ok: true, labels, usedLLM: true });
+    } catch (err) {
+      res.json({ ok: false, reason: String(err) });
+    }
+  });
+
+  // ---- Persona -------------------------------------------------------------
+  app.get("/api/persona", async (_req, res) => {
+    try {
+      const [facts, llm, settings, rendered] = await Promise.all([
+        allFacts(),
+        llmStatus(),
+        getSettings(),
+        renderPersona({}),
+      ]);
+      res.json({ facts, llm, settings, rendered: rendered.text, count: rendered.count });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // Set provider/model only — the API key is NEVER accepted or stored here.
+  app.post("/api/llm", async (req, res) => {
+    try {
+      const { provider, model, baseUrl } = req.body ?? {};
+      await setSettings({
+        ...(provider ? { provider: provider as ProviderName } : {}),
+        ...(model !== undefined ? { model } : {}),
+        ...(baseUrl !== undefined ? { baseUrl } : {}),
+      });
+      res.json({ settings: await getSettings(), llm: await llmStatus() });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/persona", async (req, res) => {
+    try {
+      const { text, category, polarity, project } = req.body ?? {};
+      if (!text || !category) {
+        res.status(400).json({ error: "text and category required" });
+        return;
+      }
+      const fact = await setFact({
+        text,
+        category: category as PersonaCategory,
+        polarity,
+        scope: project ? `project:${project}` : "global",
+      });
+      res.json(fact);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/persona/forget", async (req, res) => {
+    try {
+      const { id, hard } = req.body ?? {};
+      const ok = await forgetFact(id, Boolean(hard));
+      res.json({ ok });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/persona/learn", async (_req, res) => {
+    try {
+      res.json(await inferWithLLM());
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }

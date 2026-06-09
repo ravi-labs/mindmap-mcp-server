@@ -88,6 +88,26 @@ export async function allEntries(): Promise<IndexEntry[]> {
   return [...(await loadIndex()).values()];
 }
 
+/** Rebuild index.json from the thread files — picks up any new index fields. */
+export async function reindex(): Promise<number> {
+  await ensureDirs();
+  let files: string[];
+  try {
+    files = await fs.readdir(THREADS_DIR);
+  } catch {
+    return 0;
+  }
+  const map = new Map<string, IndexEntry>();
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    const t = await readJson<Thread>(path.join(THREADS_DIR, f));
+    if (t && t.id) map.set(t.id, toIndexEntry(t));
+  }
+  indexCache = map;
+  await persistIndex();
+  return map.size;
+}
+
 // ---------------------------------------------------------------------------
 // Threads
 // ---------------------------------------------------------------------------

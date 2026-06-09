@@ -70,7 +70,11 @@ export interface IndexEntry {
   lastAccessedAt: string;
   accessCount: number;
   sourceId?: string;
+  /** True when a full transcript is reconstructable (transcript-backed source). */
+  hasTranscript?: boolean;
 }
+
+const TRANSCRIPT_KINDS = new Set(["claude-code-cli", "cursor", "copilot"]);
 
 export function toIndexEntry(t: Thread): IndexEntry {
   return {
@@ -86,5 +90,6 @@ export function toIndexEntry(t: Thread): IndexEntry {
     lastAccessedAt: t.lastAccessedAt,
     accessCount: t.accessCount,
     ...(t.sourceId ? { sourceId: t.sourceId } : {}),
+    ...(t.sourceRef && TRANSCRIPT_KINDS.has(t.sourceRef.kind) ? { hasTranscript: true } : {}),
   };
 }

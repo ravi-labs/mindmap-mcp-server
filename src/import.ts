@@ -521,18 +521,34 @@ function toThread(s: ParsedSession): Thread {
   };
 }
 
-export async function runImport(argv: string[]): Promise<void> {
-  const opts = parseArgs(argv);
-  console.log(
-    `Importing Claude sessions (source: ${opts.source})${opts.dryRun ? "  (dry run)" : ""}`,
-  );
+export interface ImportResult {
+  total: number;
+  imported: number;
+  updated: number;
+  skippedDup: number;
+  skippedThin: number;
+  skippedFilter: number;
+  counts: Record<string, number>;
+}
 
+/** Fill an Options object with defaults — used by the dashboard endpoint. */
+export function importOptions(p: Partial<Options> = {}): Options {
+  return {
+    dryRun: p.dryRun ?? false,
+    limit: p.limit ?? Infinity,
+    project: p.project,
+    source:
+      p.source === "code" || p.source === "cowork" || p.source === "copilot" || p.source === "cursor"
+        ? p.source
+        : "all",
+    minPrompts: p.minPrompts ?? 1,
+    reimport: p.reimport ?? false,
+  };
+}
+
+/** Core import — programmatic, returns a structured result (no console output). */
+export async function importSessions(opts: Options): Promise<ImportResult> {
   const sessions = await collectSessions(opts);
-  if (sessions.length === 0) {
-    console.log("No sessions found.");
-    return;
-  }
-
   const indexEntries = await allEntries();
   const existing = new Set(indexEntries.map((e) => e.sourceId).filter(Boolean) as string[]);
   const idBySource = new Map<string, string>();
@@ -590,21 +606,34 @@ export async function runImport(argv: string[]): Promise<void> {
     imported++;
   }
 
-  if (!opts.dryRun && imported > 0) {
+  if (!opts.dryRun && (imported > 0 || updated > 0)) {
     const cfg: Config = await getConfig();
     await prune(cfg, false);
   }
 
-  const breakdown = Object.entries(counts)
+  return { total: sessions.length, imported, updated, skippedDup, skippedThin, skippedFilter, counts };
+}
+
+export async function runImport(argv: string[]): Promise<void> {
+  const opts = parseArgs(argv);
+  console.log(
+    `Importing Claude sessions (source: ${opts.source})${opts.dryRun ? "  (dry run)" : ""}`,
+  );
+  const r = await importSessions(opts);
+  if (r.total === 0) {
+    console.log("No sessions found.");
+    return;
+  }
+  const breakdown = Object.entries(r.counts)
     .map(([k, v]) => `${v} ${k}`)
     .join(", ");
   console.log(
-    `\n${opts.dryRun ? "Would import" : "Imported"} ${imported} session(s)` +
+    `\n${opts.dryRun ? "Would import" : "Imported"} ${r.imported} session(s)` +
       `${breakdown ? ` (${breakdown})` : ""}` +
-      `${updated ? `; ${opts.dryRun ? "would refresh" : "refreshed"} ${updated} existing` : ""}.`,
+      `${r.updated ? `; ${opts.dryRun ? "would refresh" : "refreshed"} ${r.updated} existing` : ""}.`,
   );
   console.log(
-    `Skipped: ${skippedDup} already imported, ${skippedThin} thin${opts.project ? `, ${skippedFilter} off-filter` : ""}.`,
+    `Skipped: ${r.skippedDup} already imported, ${r.skippedThin} thin${opts.project ? `, ${r.skippedFilter} off-filter` : ""}.`,
   );
   if (opts.dryRun) console.log("Re-run without --dry-run to apply.");
   else console.log("Tip: run 'dashboard' to see them, or resume one to promote it.");
