@@ -154,6 +154,26 @@ function tryClaudeCode(entry: ServerEntry, dryRun: boolean): string {
   }
 }
 
+/**
+ * Install the bundled brainstorm Skill into the user's Claude skills dir, so
+ * "brainstorm with my memory" works as a first-class flow. Claude Code / Cowork
+ * read ~/.claude/skills. Other clients ignore it (they don't load Skills).
+ */
+export async function installSkill(dryRun: boolean): Promise<string> {
+  // skills/ ships at the package root; this entry runs from dist/index.js.
+  const src = path.join(path.dirname(process.argv[1] || ""), "..", "skills", "mindmap-brainstorm", "SKILL.md");
+  if (!(await exists(src))) return "skill source not found (skipped)";
+  const destDir = path.join(home(), ".claude", "skills", "mindmap-brainstorm");
+  const dest = path.join(destDir, "SKILL.md");
+  if (dryRun) return `would install brainstorm skill → ${dest}`;
+  if (!(await exists(path.join(home(), ".claude")))) {
+    return "no ~/.claude (Claude Code not set up) — skill skipped";
+  }
+  await fs.mkdir(destDir, { recursive: true });
+  await fs.copyFile(src, dest);
+  return `installed brainstorm skill → ${dest}`;
+}
+
 export async function runInstall(argv: string[]): Promise<void> {
   const dryRun = argv.includes("--dry-run");
   const local = argv.includes("--local");
@@ -174,6 +194,7 @@ export async function runInstall(argv: string[]): Promise<void> {
   }
 
   console.log(`•  Claude Code: ${tryClaudeCode(entry, dryRun)}`);
+  console.log(`•  Brainstorm skill: ${await installSkill(dryRun)}`);
 
   if (dryRun) {
     console.log("\n(dry run) Re-run without --dry-run to apply.");

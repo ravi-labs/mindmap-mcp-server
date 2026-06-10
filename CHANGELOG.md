@@ -3,6 +3,21 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] — 2026-06-10
+
+### Added
+
+- **Brainstorm across tools.** Brainstorms are now a first-class memory kind, so an
+  idea you start in one AI tool continues in another — without re-explaining it.
+  - `mindmap_brainstorm` tool: loads your persona + prior idea-threads on a topic
+    (brainstorm threads boosted), promotes the ones you reuse, and hands them back
+    so you brainstorm *with* memory using each tool's own ability. Mind Map stays
+    the shared memory layer — it doesn't drive other tools.
+  - `mindmap_capture` gains a `kind` arg (`discussion` | `brainstorm`).
+  - **Companion Skill** (`skills/mindmap-brainstorm`): orchestrates load → brainstorm
+    → save. Auto-installed into `~/.claude/skills` by `install`; also `skill-install`.
+  - Dashboard: 💡 badge + "brainstorms only" filter; brainstorm marked in detail.
+
 ## [0.3.0] — 2026-06-10
 
 The **own-your-context** release. Three features built around a single thesis:

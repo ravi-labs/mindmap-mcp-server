@@ -1,6 +1,6 @@
 {
   "name": "@ravi-labs/mindmap-mcp-server",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Mind Map — a memory consolidation / context-handoff MCP server. Capture context from any AI tool, resume it anywhere, and let it decay gracefully.",
   "type": "module",
   "main": "dist/index.js",
@@ -10,7 +10,8 @@
   "files": [
     "dist",
     "NOTICE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "skills"
   ],
   "scripts": {
     "build": "tsc",

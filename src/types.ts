@@ -27,10 +27,15 @@ export interface SourceRef {
  */
 export type Status = "captured" | "promoted" | "archived";
 
+/** What kind of thread this is. 'discussion' (default) or 'brainstorm'. */
+export type Kind = "discussion" | "brainstorm";
+
 /** A single unit of memory — a portable context artifact for one topic/thread. */
 export interface Thread {
   id: string;
   title: string;
+  /** Thread kind — brainstorms are first-class so they can be resumed/clustered. */
+  kind?: Kind;
   /** The portable summary you inject into a new session. Markdown. */
   summary: string;
   /** Scannable bullet points — the "discussion points" to relocate fast. */
@@ -63,6 +68,7 @@ export interface IndexEntry {
   trace: string;
   tags: string[];
   source: string;
+  kind?: Kind;
   tier: Tier;
   status: Status;
   links: string[];
@@ -83,6 +89,7 @@ export function toIndexEntry(t: Thread): IndexEntry {
     trace: t.trace,
     tags: t.tags,
     source: t.source,
+    ...(t.kind ? { kind: t.kind } : {}),
     tier: t.tier,
     status: t.status,
     links: t.links,

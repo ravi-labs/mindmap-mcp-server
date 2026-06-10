@@ -89,6 +89,7 @@ Args:
   - tags (string[]): topic tags for filtering (optional)
   - source (string): ${sourceDesc}
   - links (string[]): ids of related threads to connect (optional)
+  - kind ('discussion'|'brainstorm'): mark brainstorm sessions so they can be resumed/clustered as ideas (default 'discussion')
 
 Returns: the created thread id and its formatted record.`,
       inputSchema: {
@@ -104,14 +105,16 @@ Returns: the created thread id and its formatted record.`,
           .array(z.string())
           .default([])
           .describe("ids of related threads to link"),
+        kind: z.enum(["discussion", "brainstorm"]).default("discussion").describe("Thread kind"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
-    async ({ title, summary, key_points, tags, source, links }) => {
+    async ({ title, summary, key_points, tags, source, links, kind }) => {
       const now = nowIso();
       const thread: Thread = {
         id: newId(),
         title,
+        ...(kind === "brainstorm" ? { kind } : {}),
         summary,
         keyPoints: key_points,
         tags,
@@ -187,6 +190,72 @@ Returns: the matched thread's full context plus a freshness nudge, or near-misse
         status: top.status,
         tier: top.tier,
         alternatives: others.map((o) => ({ id: o.entry.id, title: o.entry.title })),
+      });
+    },
+  );
+
+  // -------------------------------------------------------------- brainstorm
+  server.registerTool(
+    "mindmap_brainstorm",
+    {
+      title: "Brainstorm with memory",
+      description: `Start (or continue) a brainstorm on a topic WITH your shared memory. This pulls your prior thinking on the topic — past brainstorms first, then related discussions and your persona — so an idea you explored in one tool continues seamlessly in another. It does NOT replace your own brainstorming ability: use this to load context, then brainstorm with your full capability (and any brainstorming skill you have), then save the result.
+
+CALL THIS PROACTIVELY when the user wants to brainstorm / ideate / "think through" / "explore options" on something that may have history. Reusing a past brainstorm promotes it (promote-on-reuse).
+
+Flow: 1) call this with the topic → get prior context; 2) brainstorm, building on it; 3) save what's worth keeping with mindmap_capture(kind="brainstorm").
+
+Args:
+  - topic (string): what you're brainstorming about
+Returns: a brainstorm pack — persona + prior idea-threads to build on.`,
+      inputSchema: { topic: z.string().min(1).describe("Brainstorm topic / question") },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ topic }) => {
+      const cfg = await getConfig();
+      const entries = await allEntries();
+      const ranked = searchEntries(entries, topic, {}, Date.now());
+      // Boost brainstorm-kind threads so ideas resurface ahead of stray chatter.
+      const isBrainstorm = (e: { kind?: string; tags: string[] }) =>
+        e.kind === "brainstorm" || e.tags.includes("brainstorm");
+      const top = ranked
+        .map((r) => ({ r, s: r.score * (isBrainstorm(r.entry) ? 2.2 : 1) }))
+        .sort((a, b) => b.s - a.s)
+        .slice(0, 4)
+        .map((x) => x.r);
+
+      const loaded: Thread[] = [];
+      for (const e of top) {
+        const t = await getThread(e.entry.id);
+        if (!t) continue;
+        // Promote-on-reuse only the brainstorm threads we're explicitly building on.
+        if (t.kind === "brainstorm") {
+          applyAccess(t, cfg);
+          await saveThread(t);
+        }
+        loaded.push(t);
+      }
+
+      const persona = await renderPersona({});
+      let body = `# Brainstorm: ${topic}\n\n`;
+      if (persona.count) body += `**Who you're brainstorming with:**\n${persona.text}\n\n`;
+      if (loaded.length) {
+        body += `**Prior thinking to build on (${loaded.length}):**\n\n`;
+        for (const t of loaded) {
+          body += `### ${t.kind === "brainstorm" ? "💡 " : ""}${t.title} (\`${t.id}\`)\n`;
+          body += `${t.summary.trim().slice(0, 800)}\n`;
+          if (t.keyPoints.length) body += `${t.keyPoints.slice(0, 5).map((p) => `- ${p}`).join("\n")}\n`;
+          body += `\n`;
+        }
+        body += `_Build on the threads above — diverge widely, then converge. Don't just repeat them._\n`;
+      } else {
+        body += `No prior brainstorms on this — start fresh: diverge widely, then converge.\n`;
+      }
+      body += `\n_When something's worth keeping, save it with mindmap_capture(kind="brainstorm") so it travels to your other tools._`;
+
+      return result(body, {
+        topic,
+        related: loaded.map((t) => ({ id: t.id, title: t.title, kind: t.kind || "discussion" })),
       });
     },
   );

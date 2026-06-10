@@ -17,7 +17,7 @@ import { prune } from "./decay.js";
 import { runDashboard } from "./dashboard.js";
 import { runHttp } from "./http.js";
 import { runCleanup, runImport } from "./import.js";
-import { runInstall, runUninstall } from "./install.js";
+import { installSkill, runInstall, runUninstall } from "./install.js";
 import { auditLedger } from "./ledger.js";
 import { exportPassport, importExport, importPassport } from "./passport.js";
 import { syncPersona } from "./project.js";
@@ -170,6 +170,10 @@ async function main(): Promise<void> {
   // CLI subcommands (no server, no pruner) ----------------------------------
   if (cmd === "install") return runInstall(process.argv.slice(3));
   if (cmd === "uninstall") return runUninstall();
+  if (cmd === "skill-install") {
+    console.log(await installSkill(process.argv.includes("--dry-run")));
+    return;
+  }
   if (cmd === "import") return runImport(process.argv.slice(3));
   if (cmd === "cleanup") return runCleanup(process.argv.slice(3));
   if (cmd === "passport") return runPassport(process.argv.slice(3));

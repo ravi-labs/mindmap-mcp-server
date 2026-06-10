@@ -94,8 +94,17 @@ Just talk naturally inside your AI tool — the model calls the right tool:
 - **"Resume my work on \<topic\>"** → pulls it back into a fresh session
 - **"What's in my mind map?"** / **"Show my mind map health"** → browse / score
 - **"What do you know about how I work?"** → reads your **persona** (see below)
+- **"Brainstorm \<topic\> with me"** → loads your prior thinking so ideas continue across tools
 
 Run `npx @ravi-labs/mindmap-mcp-server quickstart` for the full getting-started guide.
+
+### Brainstorm across tools
+
+Start an idea in Claude, keep going in Cursor — without re-explaining it. Mind Map is
+the **shared memory**; each tool brings its own brainstorming muscle. `mindmap_brainstorm`
+loads your persona and prior idea-threads on the topic, you brainstorm, and saving with
+`kind: "brainstorm"` lets it resume anywhere. A bundled **brainstorm Skill** (installed
+into `~/.claude/skills` by `install`) wires the load → brainstorm → save flow for Claude.
 
 ### Make capture automatic
 
@@ -241,6 +250,7 @@ rewards a tidy, trusted memory — not a big one.
 | --- | --- |
 | `mindmap_capture` | Silently save a context summary (the effortless half of the loop). |
 | `mindmap_resume` | Find + return the best context for a topic; **promotes on reuse**. |
+| `mindmap_brainstorm` | Brainstorm a topic *with* your memory — loads prior idea-threads so ideas continue across tools. |
 | `mindmap_search` | Read-only search across every tier and tool. |
 | `mindmap_list` | Browse memories with filters. |
 | `mindmap_get` | Fetch one memory's full content. |

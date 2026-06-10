@@ -196,6 +196,7 @@ const PAGE = `<!doctype html>
   <div id="left">
     <input id="search" placeholder="Search memories…" oninput="render()" />
     <label class="txfilter"><input type="checkbox" id="txOnly" onchange="render()" /> 📜 with full transcript only</label>
+    <label class="txfilter"><input type="checkbox" id="bsOnly" onchange="render()" /> 💡 brainstorms only</label>
     <div id="listWrap"></div>
   </div>
   <div id="right"><div id="detail" class="empty">Select a memory to view its context.</div></div>
@@ -361,6 +362,7 @@ function render(){ if(VIEW==='graph') return; if(VIEW==='tree') renderTree(filte
 function renderList(items){
   var wrap = document.getElementById('listWrap');
   if(document.getElementById('txOnly').checked) items = items.filter(function(t){return t.hasTranscript;});
+  if(document.getElementById('bsOnly').checked) items = items.filter(function(t){return t.kind==='brainstorm';});
   if(items.length===0){ wrap.innerHTML='<div class="empty">No matching memories.</div>'; return; }
   var html='';
   ['hot','warm','cold'].forEach(function(tier){
@@ -369,9 +371,10 @@ function renderList(items){
     html += '<div class="tier-h">'+TIER[tier].i+' '+tier+' ('+g.length+')</div>';
     g.forEach(function(t){
       var tx = t.hasTranscript ? ' <span class="txbadge" title="Full discussion available">📜</span>' : '';
+      var bs = t.kind==='brainstorm' ? ' <span class="txbadge" title="Brainstorm">💡</span>' : '';
       html += '<div class="card" data-id="'+t.id+'">'+
         '<div class="t">'+(t.status==='promoted'?'★ ':'')+esc(t.title)+
-        '<span class="badge" style="border-color:'+TIER[tier].c+'">'+esc(t.source)+'</span>'+tx+'</div>'+
+        '<span class="badge" style="border-color:'+TIER[tier].c+'">'+esc(t.source)+'</span>'+tx+bs+'</div>'+
         '<div class="m">'+esc(t.trace||'')+'</div></div>';
     });
   });
@@ -401,7 +404,7 @@ function open_(id){
       '</div>';
     var d = document.getElementById('detail'); d.className='';
     d.innerHTML =
-      '<h2>'+TIER[t.tier].i+' '+esc(t.title)+'</h2>'+
+      '<h2>'+TIER[t.tier].i+' '+(t.kind==='brainstorm'?'💡 ':'')+esc(t.title)+'</h2>'+
       '<div class="meta">'+t.status+' · '+t.tier+' · '+esc(t.source)+' · used '+t.accessCount+'× · last '+(t.lastAccessedAt||'').slice(0,10)+'</div>'+
       '<div>'+tags+'</div>'+
       glass+
