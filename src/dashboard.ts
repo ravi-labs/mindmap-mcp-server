@@ -15,8 +15,11 @@ import path from "node:path";
 import express from "express";
 
 import { DATA_DIR } from "./constants.js";
-import { health } from "./decay.js";
+import { health, makeTrace } from "./decay.js";
 import { buildGraph } from "./graph.js";
+import { lifecycle, provenance } from "./ledger.js";
+import { exportPassport, importExport, importPassport } from "./passport.js";
+import { detectTargets, syncPersona } from "./project.js";
 import { importOptions, importSessions } from "./import.js";
 import {
   complete,
@@ -34,7 +37,7 @@ import {
   setFact,
   type PersonaCategory,
 } from "./persona.js";
-import { allEntries, getConfig, getThread, reindex } from "./store.js";
+import { allEntries, deleteThread, getConfig, getThread, reindex, saveThread } from "./store.js";
 import { getTranscript } from "./transcript.js";
 
 const HOST = "127.0.0.1";
@@ -148,9 +151,9 @@ const PAGE = `<!doctype html>
   .pconf > i { display:block; height:100%; background:linear-gradient(90deg,var(--cold),var(--accent)); }
   .pforget { background:none; border:none; color:var(--muted); cursor:pointer; font-size:15px; flex:none; padding:2px 4px; }
   .pforget:hover { color:var(--hot); }
-  #pform input, #pform select, #llmform input, #llmform select { width:100%; padding:9px 11px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--text); margin-bottom:8px; font:inherit; }
-  #pform input::placeholder, #llmform input::placeholder { color:var(--muted); }
-  #pform select, #llmform select { -webkit-appearance:none; appearance:none; padding-right:30px; cursor:pointer; background-color:var(--panel); background-repeat:no-repeat; background-position:right 10px center; background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8" fill="none" stroke="%239aa3b2" stroke-width="1.6"><path d="M1 1l5 5 5-5"/></svg>'); }
+  #pform input, #pform select, #llmform input, #llmform select, #passFile, #passKind { width:100%; padding:9px 11px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--text); margin-bottom:8px; font:inherit; }
+  #pform input::placeholder, #llmform input::placeholder, #passFile::placeholder { color:var(--muted); }
+  #pform select, #llmform select, #passKind { -webkit-appearance:none; appearance:none; padding-right:30px; cursor:pointer; background-color:var(--panel); background-repeat:no-repeat; background-position:right 10px center; background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8" fill="none" stroke="%239aa3b2" stroke-width="1.6"><path d="M1 1l5 5 5-5"/></svg>'); }
   #pform select:focus, #pform input:focus, #llmform select:focus, #llmform input:focus { outline:none; border-color:var(--accent); }
   #pform .pbtn, #llmform .pbtn { width:100%; margin-top:2px; }
   .prow { display:flex; gap:8px; }
@@ -161,6 +164,18 @@ const PAGE = `<!doctype html>
   .pbtn:disabled { opacity:.6; cursor:default; }
   .pdiv { border:none; border-top:1px solid var(--line); margin:22px 0; }
   .pempty { color:var(--muted); padding:30px 0; }
+  .glass { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; margin:14px 0; }
+  .glass .grow { display:flex; gap:12px; padding:4px 0; font-size:13px; }
+  .glass .gk { color:var(--accent); min-width:88px; font-size:11px; text-transform:uppercase; letter-spacing:.06em; padding-top:2px; }
+  .glass .gv { color:var(--text); flex:1; min-width:0; word-break:break-word; }
+  .forgetrow { margin-top:18px; display:flex; align-items:center; gap:10px; }
+  .forgetbtn { background:var(--panel2); color:var(--muted); border:1px solid var(--line); padding:7px 14px; border-radius:8px; cursor:pointer; font-size:13px; }
+  .forgetbtn:hover { border-color:var(--hot); color:var(--hot); }
+  .ptarget { display:flex; align-items:center; gap:9px; padding:7px 0; font-size:13px; border-bottom:1px solid var(--line); }
+  .ptarget input { flex:none; }
+  .ptarget .pt-id { font-weight:600; }
+  .ptarget .pt-tag { font-size:10px; padding:1px 7px; border-radius:20px; border:1px solid var(--line); color:var(--muted); }
+  .ptarget .pt-tag.on { color:var(--cold); border-color:var(--cold); }
 </style>
 </head>
 <body>
@@ -247,6 +262,30 @@ const PAGE = `<!doctype html>
       <p class="pmuted">Scan your memories for recurring signals. Uses your LLM if configured above, else a no-LLM heuristic.</p>
       <button class="pbtn" onclick="learnPersona()" id="learnBtn">✨ Learn now</button>
       <span id="learnStatus" class="pmuted"></span>
+
+      <hr class="pdiv" />
+      <h3>Sync persona → your tools</h3>
+      <p class="pmuted">Write your persona into each tool's own config (Claude, Cursor, Copilot, Windsurf) so even non-MCP tools know how you work. Writes only inside a managed block.</p>
+      <div id="targets"></div>
+      <label class="txfilter" style="margin:8px 0"><input type="checkbox" id="projForce" /> also write tools not detected</label>
+      <button class="pbtn primary" onclick="syncProjection()" id="projBtn">Write persona to selected tools</button>
+      <span id="projStatus" class="pmuted"></span>
+
+      <hr class="pdiv" />
+      <h3>Memory Passport</h3>
+      <p class="pmuted">Your context is yours. Export everything to a portable file, or pull conversations out of ChatGPT / Claude data exports.</p>
+      <button class="pbtn" onclick="exportPassport()" id="passExportBtn">⬇ Export passport</button>
+      <span id="passExportStatus" class="pmuted"></span>
+      <div class="prow" style="margin-top:10px">
+        <select id="passKind">
+          <option value="passport">Mind Map passport</option>
+          <option value="chatgpt">ChatGPT export</option>
+          <option value="claude">Claude.ai export</option>
+        </select>
+      </div>
+      <input id="passFile" placeholder="path to file (e.g. ~/Downloads/conversations.json)" />
+      <button class="pbtn" onclick="importPassport()" id="passImportBtn">⬆ Import</button>
+      <span id="passImportStatus" class="pmuted"></span>
     </div>
   </div>
 </main>
@@ -351,16 +390,39 @@ function open_(id){
     // sources have no transcript — showing a dead button just confuses.
     var ref = t.sourceRef || {};
     var hasTranscript = ref.kind==='claude-code-cli' || ref.kind==='cursor' || ref.kind==='copilot';
+    // Glass-box: where it came from, why it's trusted, when it fades.
+    var lc = t._lifecycle || {};
+    var fades = lc.next ? ('→ '+lc.next.to+(lc.next.to==='cold'?' trace':'')+' in '+lc.next.inDays+'d') : (lc.tier==='cold'?'cold (trace)':lc.tier);
+    var glass =
+      '<div class="glass">'+
+      '<div class="grow"><span class="gk">Provenance</span><span class="gv">'+esc(t._provenance||t.source)+'</span></div>'+
+      '<div class="grow"><span class="gk">Trust</span><span class="gv">'+(t.accessCount||0)+'× reused'+(t.status==='promoted'?' · ★ promoted':'')+'</span></div>'+
+      '<div class="grow"><span class="gk">Lifecycle</span><span class="gv">'+esc(fades)+' · last used '+(lc.lastUsedDays!=null?lc.lastUsedDays+'d ago':'—')+'</span></div>'+
+      '</div>';
     var d = document.getElementById('detail'); d.className='';
     d.innerHTML =
       '<h2>'+TIER[t.tier].i+' '+esc(t.title)+'</h2>'+
       '<div class="meta">'+t.status+' · '+t.tier+' · '+esc(t.source)+' · used '+t.accessCount+'× · last '+(t.lastAccessedAt||'').slice(0,10)+'</div>'+
       '<div>'+tags+'</div>'+
+      glass+
       '<h3>Summary</h3><div class="md">'+md(t.summary||'')+'</div>'+
       (kp?'<h3>Key points</h3><ul>'+kp+'</ul>':'')+links+
-      (hasTranscript ? '<button id="fullBtn" class="fullbtn">📜 View full discussion</button><div id="transcript"></div>' : '');
+      (hasTranscript ? '<button id="fullBtn" class="fullbtn">📜 View full discussion</button><div id="transcript"></div>' : '')+
+      '<div class="forgetrow"><button id="forgetBtn" class="forgetbtn" title="Archive to a one-line trace">🗑 Forget this</button>'+
+      '<span id="forgetStatus" class="meta"></span></div>';
     if(hasTranscript) document.getElementById('fullBtn').onclick = function(){ loadTranscript(t.id); };
+    document.getElementById('forgetBtn').onclick = function(){ forgetMemory(t.id); };
   });
+}
+
+function forgetMemory(id){
+  var st=document.getElementById('forgetStatus');
+  st.textContent=' archiving…';
+  fetch('/api/forget',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})
+    .then(function(r){return r.json();}).then(function(d){
+      st.textContent = d.ok ? ' ✓ archived to a trace' : ' failed';
+      load();
+    }).catch(function(){ st.textContent=' failed'; });
 }
 
 function loadTranscript(id){
@@ -476,7 +538,61 @@ function loadPersona(){
     document.getElementById('llmBaseUrl').value=s.baseUrl||'';
     syncLlmForm(d.llm);
     renderPersonaFacts(d.facts||[]);
+    loadProjection();
   });
+}
+
+// ---- Persona projection (write into tools) --------------------------------
+function loadProjection(){
+  fetch('/api/projection').then(function(r){return r.json();}).then(function(d){
+    var box=document.getElementById('targets');
+    box.innerHTML=(d.targets||[]).map(function(t){
+      var checked = t.present || t.managed ? 'checked' : '';
+      var tag = t.managed ? '<span class="pt-tag on">synced</span>' : (t.present ? '<span class="pt-tag on">detected</span>' : '<span class="pt-tag">not found</span>');
+      return '<label class="ptarget"><input type="checkbox" data-tid="'+esc(t.id)+'" '+checked+'>'+
+        '<span class="pt-id">'+esc(t.id)+'</span> '+tag+'</label>';
+    }).join('');
+  });
+}
+function syncProjection(){
+  var ids=[]; document.querySelectorAll('#targets input[data-tid]:checked').forEach(function(c){ ids.push(c.getAttribute('data-tid')); });
+  var st=document.getElementById('projStatus'), btn=document.getElementById('projBtn');
+  if(!ids.length){ st.textContent=' pick at least one tool'; return; }
+  btn.disabled=true; st.textContent=' writing…';
+  fetch('/api/projection/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({targets:ids,force:document.getElementById('projForce').checked})})
+    .then(function(r){return r.json();}).then(function(d){
+      btn.disabled=false;
+      var wrote=(d.outcomes||[]).filter(function(o){return o.action==='created'||o.action==='updated';}).length;
+      st.textContent=' ✓ wrote '+wrote+' file(s)';
+      loadProjection();
+      setTimeout(function(){ st.textContent=''; },6000);
+    }).catch(function(){ btn.disabled=false; st.textContent=' failed'; });
+}
+
+// ---- Memory Passport ------------------------------------------------------
+function exportPassport(){
+  var st=document.getElementById('passExportStatus'), btn=document.getElementById('passExportBtn');
+  btn.disabled=true; st.textContent=' exporting…';
+  fetch('/api/passport/export').then(function(r){return r.json();}).then(function(d){
+    btn.disabled=false;
+    if(d.error){ st.textContent=' failed'; return; }
+    st.textContent=' ✓ '+d.counts.memories+' memories + '+d.counts.persona+' facts → '+d.path;
+  }).catch(function(){ btn.disabled=false; st.textContent=' failed'; });
+}
+function importPassport(){
+  var file=document.getElementById('passFile').value.trim();
+  var kind=document.getElementById('passKind').value;
+  var st=document.getElementById('passImportStatus'), btn=document.getElementById('passImportBtn');
+  if(!file){ st.textContent=' enter a file path'; return; }
+  btn.disabled=true; st.textContent=' importing…';
+  fetch('/api/passport/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file,kind:kind})})
+    .then(function(r){return r.json();}).then(function(d){
+      btn.disabled=false;
+      if(d.error){ st.textContent=' '+d.error; return; }
+      if(d.kind==='passport'){ st.textContent=' ✓ '+d.memories.imported+' memories ('+d.memories.skippedDup+' dup), persona +'+d.persona.added; }
+      else { st.textContent=' ✓ '+d.imported+' of '+d.total+' '+d.kind+' ('+d.skippedDup+' dup)'; }
+      load();
+    }).catch(function(){ btn.disabled=false; st.textContent=' failed'; });
 }
 function syncLlmForm(llm){
   var prov=document.getElementById('llmProvider').value;
@@ -905,7 +1021,79 @@ export async function runDashboard(): Promise<void> {
       res.status(404).json({ error: "not found" });
       return;
     }
-    res.json(t);
+    // Glass-box: attach provenance + decay forecast alongside the raw thread.
+    const cfg = await getConfig();
+    const lc = lifecycle(t, cfg, Date.now());
+    res.json({ ...t, _provenance: provenance(t), _lifecycle: lc });
+  });
+
+  // Glass-box: forget a memory (soft-archive to a trace, or hard delete).
+  app.post("/api/forget", async (req, res) => {
+    try {
+      const { id, hard } = req.body ?? {};
+      if (hard) {
+        res.json({ ok: await deleteThread(id) });
+        return;
+      }
+      const t = await getThread(id);
+      if (!t) {
+        res.json({ ok: false });
+        return;
+      }
+      t.status = "archived";
+      t.tier = "cold";
+      t.trace = makeTrace(t);
+      t.archivedAt = new Date().toISOString();
+      t.updatedAt = t.archivedAt;
+      await saveThread(t);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // ---- Memory Passport -----------------------------------------------------
+  app.get("/api/passport/export", async (_req, res) => {
+    try {
+      res.json(await exportPassport());
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/passport/import", async (req, res) => {
+    try {
+      const { file, kind } = req.body ?? {};
+      if (!file) {
+        res.status(400).json({ error: "file required" });
+        return;
+      }
+      if (!kind || kind === "passport") {
+        res.json({ kind: "passport", ...(await importPassport(file)) });
+        return;
+      }
+      res.json({ kind, ...(await importExport(kind, file)) });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // ---- Persona projection --------------------------------------------------
+  app.get("/api/projection", async (_req, res) => {
+    try {
+      res.json({ cwd: process.cwd(), targets: await detectTargets(process.cwd()) });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/projection/sync", async (req, res) => {
+    try {
+      const { targets, force } = req.body ?? {};
+      res.json(await syncPersona({ only: targets, force: Boolean(force) }));
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
   });
 
   app.get("/api/transcript/:id", async (req, res) => {

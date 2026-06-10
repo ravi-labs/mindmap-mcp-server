@@ -11,6 +11,9 @@ import { z } from "zod";
 import { type Config } from "./constants.js";
 import { computeTier, health, makeTrace, prune } from "./decay.js";
 import { formatList, formatThread, truncate } from "./format.js";
+import { auditLedger } from "./ledger.js";
+import { exportPassport, importExport, importPassport } from "./passport.js";
+import { detectTargets, syncPersona } from "./project.js";
 import {
   allFacts,
   forgetFact,
@@ -730,6 +733,108 @@ Returns: current provider/model, whether it's ready, and a rough cost note.`,
         `_Providers: ${valid}. Key comes from your environment; Mind Map never stores it._`,
       ].filter(Boolean).join("\n\n");
       return result(body, st);
+    },
+  );
+
+  // ------------------------------------------------------------- glass-box audit
+  server.registerTool(
+    "mindmap_audit",
+    {
+      title: "Audit what's stored (glass-box)",
+      description: `Show a transparent ledger of everything Mind Map knows — each memory's provenance (where it came from), trust (promote-on-reuse count), tier, last use, and when it will fade to a one-line trace. Use when the user asks "what do you know about me?", "what's stored?", or wants to review/clean their memory.
+
+Args: limit (number, optional, default 30). Returns: the ledger rows.`,
+      inputSchema: { limit: z.number().int().positive().max(500).default(30).describe("Max rows") },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ limit }) => {
+      const cfg = await getConfig();
+      const rows = (await auditLedger(await allEntries(), getThread, cfg, Date.now())).slice(0, limit);
+      const body = rows.length
+        ? rows
+            .map(
+              (r) =>
+                `• ${r.title}\n   ${r.provenance} · trust ${r.trust}× · ${r.tier} · ${r.fades} · used ${r.lastUsedDays}d ago`,
+            )
+            .join("\n")
+        : "No memories stored yet.";
+      return result(`Glass-box ledger (${rows.length}):\n\n${body}`, { rows });
+    },
+  );
+
+  // --------------------------------------------------------------- passport
+  server.registerTool(
+    "mindmap_passport_export",
+    {
+      title: "Export memory passport",
+      description: `Export all memories + persona to a single portable JSON file you own — to back up, move to another machine, or hand to a fork. This is your context, extractable.
+
+Args: path (string, optional) — output file (default ~/mindmap-passport-<date>.json). Returns: the file path and counts.`,
+      inputSchema: { path: z.string().optional().describe("Output file path") },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ path: outPath }) => {
+      const r = await exportPassport(outPath);
+      return result(`Exported ${r.counts.memories} memories + ${r.counts.persona} persona facts to ${r.path}`, r);
+    },
+  );
+
+  server.registerTool(
+    "mindmap_passport_import",
+    {
+      title: "Import memory passport / data export",
+      description: `Bring context IN. Either a Mind Map passport file (from another machine), or pull your conversations OUT of a walled garden by pointing at its exported data file:
+  - kind 'passport' (default): a Mind Map passport JSON
+  - kind 'chatgpt': ChatGPT's exported conversations.json
+  - kind 'claude': Claude.ai's exported conversations.json
+The cloud chats themselves can't be reached live, but their EXPORT FILES are yours — this imports them as distilled memories.
+
+Args: file (string, required), kind ('passport'|'chatgpt'|'claude', default 'passport'). Returns: import counts.`,
+      inputSchema: {
+        file: z.string().describe("Path to the file to import"),
+        kind: z.enum(["passport", "chatgpt", "claude"]).default("passport").describe("File kind"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ file, kind }) => {
+      if (kind === "passport") {
+        const r = await importPassport(file);
+        return result(
+          `Imported ${r.memories.imported} memories (${r.memories.skippedDup} dup) + persona +${r.persona.added}/${r.persona.updated}.`,
+          { ...r },
+        );
+      }
+      const r = await importExport(kind, file);
+      return result(`Imported ${r.imported} of ${r.total} ${kind} conversations (${r.skippedDup} already present).`, { ...r });
+    },
+  );
+
+  // ----------------------------------------------------- persona projection
+  server.registerTool(
+    "mindmap_persona_sync",
+    {
+      title: "Write persona into your tools",
+      description: `Project the user's persona into the native instruction files of their AI tools (Claude CLAUDE.md, Cursor rules, Copilot instructions, Windsurf rules), so even non-MCP tools know how they work — from one source. Writes only inside a managed block; never clobbers the user's own content. By default writes the global Claude config + any detected project tools.
+
+Args:
+  - targets (string[], optional): specific target ids (claude-global, claude-project, cursor, copilot, windsurf)
+  - force (boolean, optional): write even if a tool isn't detected
+Returns: per-target outcomes.`,
+      inputSchema: {
+        targets: z.array(z.string()).optional().describe("Target ids to write"),
+        force: z.boolean().default(false).describe("Write even if tool not detected"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ targets: only, force }) => {
+      const detected = await detectTargets(process.cwd());
+      const r = await syncPersona({ only, force });
+      const wrote = r.outcomes.filter((o) => o.action === "created" || o.action === "updated");
+      const body =
+        `Persona synced (project: ${r.project}).\n` +
+        r.outcomes.map((o) => `  ${o.action === "skipped" ? "–" : "✓"} ${o.id}: ${o.action}${o.reason ? ` (${o.reason})` : ""}`).join("\n") +
+        `\n\nDetected tools: ${detected.filter((d) => d.present).map((d) => d.id).join(", ") || "none"}.`;
+      return result(body, { ...r, wrote: wrote.length });
     },
   );
 }

@@ -161,6 +161,45 @@ Add this to your client's instructions so it happens automatically:
 > At the start of a session call `mindmap_persona` and apply it. When I state a
 > durable preference, call `mindmap_persona_set`.
 
+## Own your context
+
+A memory you can't extract, inspect, or carry isn't a memory you own. Three
+features make Mind Map's memory genuinely yours:
+
+**Memory Passport** — export everything to one portable, open file, and pull your
+context *out of the walled gardens*:
+
+```bash
+npx @ravi-labs/mindmap-mcp-server passport export                 # → ~/mindmap-passport-<date>.json
+npx @ravi-labs/mindmap-mcp-server passport import <file>          # from another machine
+npx @ravi-labs/mindmap-mcp-server passport import-chatgpt conversations.json   # your ChatGPT export
+npx @ravi-labs/mindmap-mcp-server passport import-claude  conversations.json   # your Claude.ai export
+```
+
+The cloud chats can't be reached live from a local server — but their **data
+export files are yours**, and this imports them as distilled memories.
+
+**Glass-box memory** — see exactly what's stored and why:
+
+```bash
+npx @ravi-labs/mindmap-mcp-server audit
+```
+
+Every memory shows its **provenance** (where it came from), **trust** (how many
+times you reused it), and **decay forecast** (when it fades to a one-line trace).
+In the dashboard, each memory has a one-click **Forget**. Unlike opaque vector
+stores, nothing about your memory is hidden from you.
+
+**Persona projection** — write your persona into each tool's own config, so even
+non-MCP tools know how you work:
+
+```bash
+npx @ravi-labs/mindmap-mcp-server persona-sync          # Claude, Cursor, Copilot, Windsurf
+```
+
+It edits only a managed block (`<!-- mindmap:persona:start -->`…`:end`), so your
+own content is never touched.
+
 ## Optional: bring your own LLM key
 
 Mind Map runs **fully without any LLM** — every feature has a no-LLM path. If you
@@ -218,7 +257,11 @@ rewards a tidy, trusted memory — not a big one.
 | `mindmap_persona_set` | Record a durable preference (stack/style/constraints…). |
 | `mindmap_persona_forget` | Mute or delete a persona fact. |
 | `mindmap_persona_learn` | Infer persona facts from your memories (LLM-assisted if configured). |
+| `mindmap_persona_sync` | Write your persona into your tools' native config files. |
 | `mindmap_llm` | Configure the optional BYO-key LLM (provider/model; key stays in your env). |
+| `mindmap_audit` | Glass-box ledger: provenance, trust, and decay forecast for every memory. |
+| `mindmap_passport_export` | Export all memories + persona to one portable file. |
+| `mindmap_passport_import` | Import a passport, or a ChatGPT / Claude.ai data export. |
 
 ## How it stores things
 

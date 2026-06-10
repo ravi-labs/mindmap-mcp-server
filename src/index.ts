@@ -18,8 +18,11 @@ import { runDashboard } from "./dashboard.js";
 import { runHttp } from "./http.js";
 import { runCleanup, runImport } from "./import.js";
 import { runInstall, runUninstall } from "./install.js";
+import { auditLedger } from "./ledger.js";
+import { exportPassport, importExport, importPassport } from "./passport.js";
+import { syncPersona } from "./project.js";
 import { createServer } from "./server.js";
-import { getConfig } from "./store.js";
+import { allEntries, getConfig, getThread } from "./store.js";
 
 const PKG = "@ravi-labs/mindmap-mcp-server";
 const HELP = `${SERVER_NAME} v${SERVER_VERSION} — local-first memory & context handoff for AI tools
@@ -33,6 +36,12 @@ Usage (via npx, or the installed 'mindmap-mcp-server' command):
   npx ${PKG} uninstall       Remove Mind Map from client configs
   npx ${PKG} import          Import past sessions (--dry-run, --limit N, --project X, --source, --reimport)
   npx ${PKG} cleanup         Remove automated + duplicate imported memories (--dry-run)
+  npx ${PKG} passport export [path]        Export memories + persona to a portable file
+  npx ${PKG} passport import <file>        Import a Mind Map passport
+  npx ${PKG} passport import-chatgpt <conversations.json>   Pull in a ChatGPT data export
+  npx ${PKG} passport import-claude  <conversations.json>   Pull in a Claude.ai data export
+  npx ${PKG} audit           Glass-box ledger: what's stored, provenance, decay
+  npx ${PKG} persona-sync    Write your persona into your tools' config files (--force)
   npx ${PKG} dashboard       Open the local web UI (http://127.0.0.1:7777)
   npx ${PKG} quickstart      Print the getting-started guide
   npx ${PKG} --help          Show this help
@@ -94,6 +103,58 @@ async function startBackgroundPruner(): Promise<void> {
   timer.unref();
 }
 
+async function runPassport(argv: string[]): Promise<void> {
+  const sub = argv[0];
+  const arg = argv[1];
+  if (sub === "export") {
+    const r = await exportPassport(arg);
+    console.log(`✓ Exported ${r.counts.memories} memories + ${r.counts.persona} persona facts`);
+    console.log(`  → ${r.path}`);
+    return;
+  }
+  if (sub === "import") {
+    if (!arg) return console.error("Usage: passport import <file>");
+    const r = await importPassport(arg);
+    console.log(
+      `✓ Imported ${r.memories.imported} memories (${r.memories.skippedDup} dup of ${r.memories.total}); persona +${r.persona.added}/${r.persona.updated}.`,
+    );
+    return;
+  }
+  if (sub === "import-chatgpt" || sub === "import-claude") {
+    if (!arg) return console.error(`Usage: passport ${sub} <conversations.json>`);
+    const kind = sub === "import-chatgpt" ? "chatgpt" : "claude";
+    const r = await importExport(kind, arg);
+    console.log(`✓ Imported ${r.imported} of ${r.total} ${kind} conversations (${r.skippedDup} already present).`);
+    return;
+  }
+  console.error("Usage: passport export|import|import-chatgpt|import-claude [file]");
+}
+
+async function runAudit(): Promise<void> {
+  const cfg = await getConfig();
+  const rows = await auditLedger(await allEntries(), getThread, cfg, Date.now());
+  if (rows.length === 0) {
+    console.log("No memories stored yet.");
+    return;
+  }
+  console.log(`🔍 Glass-box ledger — ${rows.length} memories (most-trusted first)\n`);
+  for (const r of rows.slice(0, 50)) {
+    console.log(`• ${r.title}`);
+    console.log(`    ${r.provenance}`);
+    console.log(`    trust ${r.trust}× · ${r.tier} · ${r.fades} · used ${r.lastUsedDays}d ago\n`);
+  }
+}
+
+async function runPersonaSync(argv: string[]): Promise<void> {
+  const r = await syncPersona({ force: argv.includes("--force") });
+  console.log(`Persona projected (project: ${r.project}):\n`);
+  for (const o of r.outcomes) {
+    console.log(`  ${o.action === "skipped" ? "–" : "✓"} ${o.id}: ${o.action}${o.reason ? ` (${o.reason})` : ""}`);
+    if (o.action !== "skipped") console.log(`      ${o.file}`);
+  }
+  console.log("\nTip: pass --force to write into tools that aren't auto-detected.");
+}
+
 async function runStdio(): Promise<void> {
   const server = createServer();
   const transport = new StdioServerTransport();
@@ -111,6 +172,9 @@ async function main(): Promise<void> {
   if (cmd === "uninstall") return runUninstall();
   if (cmd === "import") return runImport(process.argv.slice(3));
   if (cmd === "cleanup") return runCleanup(process.argv.slice(3));
+  if (cmd === "passport") return runPassport(process.argv.slice(3));
+  if (cmd === "audit") return runAudit();
+  if (cmd === "persona-sync") return runPersonaSync(process.argv.slice(3));
   if (cmd === "dashboard" || cmd === "ui") return runDashboard();
   if (cmd === "quickstart") {
     console.log(QUICKSTART);

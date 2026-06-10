@@ -133,6 +133,40 @@ export async function allFacts(): Promise<PersonaFact[]> {
   return load();
 }
 
+/**
+ * Merge in facts from elsewhere (a passport import). Dedup by scope + text;
+ * an incoming fact bumps confidence on a match, otherwise it's added with a
+ * fresh id so it can't collide with a local one.
+ */
+export async function mergeFacts(incoming: PersonaFact[]): Promise<{ added: number; updated: number }> {
+  const facts = await load();
+  let added = 0;
+  let updated = 0;
+  const now = nowIso();
+  for (const inc of incoming) {
+    if (!inc || typeof inc.text !== "string" || !inc.category) continue;
+    const scope = inc.scope || "global";
+    const match = facts.find((f) => f.scope === scope && norm(f.text) === norm(inc.text));
+    if (match) {
+      match.confidence = Math.max(match.confidence, inc.confidence ?? match.confidence);
+      match.lastObservedAt = now;
+      updated += 1;
+    } else {
+      facts.push({
+        ...inc,
+        id: randomUUID().slice(0, 8),
+        scope,
+        status: inc.status === "muted" ? "muted" : "active",
+        lastObservedAt: inc.lastObservedAt || now,
+        createdAt: inc.createdAt || now,
+      });
+      added += 1;
+    }
+  }
+  await save(facts);
+  return { added, updated };
+}
+
 // --- Heuristic inference (no LLM) ------------------------------------------
 
 /** Stack/tool terms worth surfacing as inferred facts when they recur. */

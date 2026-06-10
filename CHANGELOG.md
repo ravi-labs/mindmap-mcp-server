@@ -3,6 +3,38 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-06-10
+
+The **own-your-context** release. Three features built around a single thesis:
+*interoperability isn't portability — a memory you can't extract, inspect, or
+carry isn't a memory you own.*
+
+### Added
+
+- **Memory Passport** — export every memory + persona to one portable, open JSON
+  file (back it up, move machines, hand to a fork), and import it back with clean
+  dedup. Crucially, **pull your context OUT of walled gardens**: import the
+  *data-export files* from ChatGPT (`conversations.json`) and Claude.ai as
+  distilled memories.
+  - Tools: `mindmap_passport_export`, `mindmap_passport_import`.
+  - CLI: `passport export [path]`, `passport import <file>`,
+    `passport import-chatgpt <file>`, `passport import-claude <file>`.
+  - Dashboard: export button + import (passport / ChatGPT / Claude) in the
+    Persona tab.
+- **Glass-box memory** — see and control exactly what's stored. Every memory now
+  shows its **provenance** (where it came from), **trust** (promote-on-reuse
+  count), and a **decay forecast** (when it fades to a one-line trace), plus a
+  one-click **Forget**. Answers the "memory you can't audit" gap that opaque
+  vector stores have.
+  - Tool: `mindmap_audit`. CLI: `audit`. Dashboard: provenance/lifecycle block +
+    Forget button on every memory.
+- **Persona projection** — write your persona into each tool's *native* config
+  (Claude `CLAUDE.md`, Cursor rules, Copilot instructions, Windsurf rules) from
+  one source, so even non-MCP tools know how you work. Writes only inside a
+  managed block; never clobbers your own content.
+  - Tool: `mindmap_persona_sync`. CLI: `persona-sync [--force]`. Dashboard:
+    target detection + selective sync in the Persona tab.
+
 ## [0.2.1] — 2026-06-10
 
 The **persona** release: Mind Map now remembers *how you work*, not just what you
