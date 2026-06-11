@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] — 2026-06-11
+
+### Fixed
+
+- **ChatGPT & Claude.ai export importers** hardened for real export formats:
+  - ChatGPT (`passport import-chatgpt`): skips hidden system / custom-instruction
+    messages and `tool`/`system` roles; handles `multimodal_text` parts that mix
+    strings with objects (image/DALL·E pointers); falls back to `content.text`.
+  - Claude (`passport import-claude`): handles the newer `content[]` array form
+    where the top-level `text` is empty.
+  - Both now give a clear "wrong file" error pointing to the right export file,
+    while a genuinely empty export remains a valid no-op.
+
 ## [0.3.1] — 2026-06-10
 
 ### Added
