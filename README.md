@@ -1,5 +1,10 @@
 # 🧠 Mind Map — MCP memory & context-handoff server
 
+[![npm](https://img.shields.io/npm/v/@ravi-labs/mindmap-mcp-server?logo=npm)](https://www.npmjs.com/package/@ravi-labs/mindmap-mcp-server)
+[![CI](https://github.com/ravi-labs/mindmap-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/ravi-labs/mindmap-mcp-server/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/node/v/@ravi-labs/mindmap-mcp-server)](https://nodejs.org)
+
 Ever lose the thread of a discussion across Claude Code, Claude Desktop, and your
 other AI tools? Mind Map is a small, **local-first** [MCP](https://modelcontextprotocol.io)
 server that acts as a **shared memory layer** across all your local MCP clients.

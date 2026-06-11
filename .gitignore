@@ -2,3 +2,7 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# Local working files (strategy notes, scratch) — not for the public repo
+docs/
+*.mindmap-bak
