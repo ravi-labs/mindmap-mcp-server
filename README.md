@@ -213,14 +213,76 @@ own content is never touched.
 
 Mind Map runs **fully without any LLM** — every feature has a no-LLM path. If you
 *want* smarter persona inference and topic-graph labels, plug in your **own**
-provider (`anthropic`, `openai`, `google`, or local `ollama`):
+provider (`anthropic`, `openai`, `google`, or local `ollama`). It's opt-in and
+graceful: no key, or a failed call, simply falls back to the no-LLM path, and any
+cost notes are rough estimates — never a bill.
 
-- Set it from the dashboard's **Persona** tab, or call `mindmap_llm`.
-- **Your API key is never stored.** Mind Map saves only the provider + model name
-  (`~/.mindmap/llm.json`); the key is read from your **environment** (e.g.
-  `ANTHROPIC_API_KEY`). Set it yourself and restart the server.
-- Everything is **opt-in and graceful** — no key, or a failed call, simply falls
-  back to the no-LLM path. Cost notes are rough estimates, never a bill.
+**Mind Map never stores your API key.** It saves only the provider + model name
+in `~/.mindmap/llm.json`; the key is read from an **environment variable** at
+call time. You set the key; Mind Map just reads it.
+
+### Step 1 — choose a provider
+
+From the dashboard's **Persona** tab (LLM section), or via the `mindmap_llm` tool
+(e.g. "set my mindmap llm provider to anthropic"). This writes `{provider, model}`
+to `~/.mindmap/llm.json`. Per provider, Mind Map looks for one env var:
+
+| Provider | Env var it reads | Default model |
+| --- | --- | --- |
+| `anthropic` | `ANTHROPIC_API_KEY` | claude-sonnet-4-6 |
+| `openai` | `OPENAI_API_KEY` | gpt-4o |
+| `google` | `GOOGLE_API_KEY` | gemini-1.5-pro |
+| `ollama` | *(none — local)* | llama3.1 |
+
+### Step 2 — give it the key
+
+The key must be visible **to the process that needs it**. There are two ways, and
+which one you need depends on the surface:
+
+**A. Shell profile** — for the **dashboard / CLI**, and for **Claude Code** (its
+MCP servers inherit your shell environment):
+
+```bash
+# ~/.zshrc (or ~/.bashrc)
+export ANTHROPIC_API_KEY="sk-ant-…"
+```
+
+Then `source ~/.zshrc` and restart. Run the dashboard from that same shell and
+it'll pick the key up.
+
+**B. The client's MCP config `env` block** — for **GUI clients** (Claude Desktop,
+Cursor, Windsurf), which launch MCP servers *without* your shell environment, so
+the `export` above won't reach them. Add an `env` map to Mind Map's entry:
+
+```json
+{
+  "mcpServers": {
+    "mindmap": {
+      "command": "npx",
+      "args": ["-y", "@ravi-labs/mindmap-mcp-server"],
+      "env": { "ANTHROPIC_API_KEY": "sk-ant-…" }
+    }
+  }
+}
+```
+
+> Trade-off: method **B** writes the key into that client's config file in plain
+> text. That's the only way some GUI clients can pass it through — but if you'd
+> rather not have a key on disk, prefer method **A** (or launch the GUI app from a
+> terminal that already has the variable exported, so it inherits it).
+
+There is **no key field in the dashboard or tools by design** — a key typed into a
+web form would have to be transmitted and stored to be useful, which is exactly the
+credential-on-disk pattern Mind Map avoids. You set the env var yourself.
+
+For **ollama** there's no key at all — just run `ollama serve` locally and pick the
+`ollama` provider.
+
+### Step 3 — verify
+
+Call `mindmap_llm` with no arguments (or open the dashboard Persona tab). When the
+key is visible it reports **ready** — e.g. *"✓ `ANTHROPIC_API_KEY` detected."*
+After setting the env var, **restart** the server/client so it's picked up.
 
 ## See your memory — the dashboard
 
