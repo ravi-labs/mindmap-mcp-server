@@ -180,7 +180,8 @@ interface GptNode {
   message?: {
     author?: { role?: string };
     create_time?: number;
-    content?: { content_type?: string; parts?: unknown[] };
+    content?: { content_type?: string; parts?: unknown[]; text?: string };
+    metadata?: { is_visually_hidden_from_conversation?: boolean };
   };
 }
 interface GptConversation {
@@ -192,25 +193,51 @@ interface GptConversation {
   mapping?: Record<string, GptNode>;
 }
 
+/**
+ * Extract plain text from a ChatGPT message. Real exports put strings in
+ * `content.parts` for text, but `multimodal_text` mixes in non-string objects
+ * (image_asset_pointer, dalle metadata) which we skip; some types use
+ * `content.text` instead. Returns "" for anything without human-readable text.
+ */
 function gptText(node: GptNode): string {
-  const parts = node.message?.content?.parts;
-  if (!Array.isArray(parts)) return "";
-  return parts.filter((x) => typeof x === "string").join("\n").trim();
+  const c = node.message?.content;
+  if (!c) return "";
+  if (Array.isArray(c.parts)) {
+    const s = c.parts.filter((x) => typeof x === "string").join("\n").trim();
+    if (s) return s;
+  }
+  if (typeof c.text === "string") return c.text.trim();
+  return "";
 }
 
 /** Parse ChatGPT's exported conversations.json into draft memories. */
 export async function importChatGPT(file: string): Promise<IngestCount> {
   const data = JSON.parse(await fs.readFile(expand(file), "utf8")) as unknown;
-  const convos: GptConversation[] = Array.isArray(data)
+  const isArr = Array.isArray(data);
+  const convField = (data as { conversations?: unknown[] })?.conversations;
+  const convos: GptConversation[] = isArr
     ? (data as GptConversation[])
-    : Array.isArray((data as { conversations?: unknown[] }).conversations)
-      ? ((data as { conversations: GptConversation[] }).conversations)
+    : Array.isArray(convField)
+      ? (convField as GptConversation[])
       : [];
+  // A real export is an array (or {conversations:[…]}) of objects with `mapping`.
+  // An empty array is a valid (empty) export; a wrong file is not.
+  if (!isArr && !Array.isArray(convField)) {
+    throw new Error("This doesn't look like a ChatGPT export. Use the conversations.json from your ChatGPT data export (Settings → Data controls → Export).");
+  }
+  if (convos.length && !convos.some((c) => c && typeof c.mapping === "object")) {
+    throw new Error("This JSON has no conversation `mapping` — it may be the wrong file from your ChatGPT export. Use conversations.json.");
+  }
 
   const drafts: Draft[] = [];
   for (const c of convos) {
     const nodes = Object.values(c.mapping || {})
-      .filter((n) => n.message && gptText(n))
+      .filter((n) => {
+        const m = n.message;
+        // Skip empty nodes, hidden system/custom-instruction messages, and non-text.
+        if (!m || m.metadata?.is_visually_hidden_from_conversation) return false;
+        return Boolean(gptText(n));
+      })
       .map((n) => ({
         role: n.message!.author?.role || "",
         text: gptText(n),
@@ -271,7 +298,14 @@ function claudeText(m: ClaudeMsg): string {
 /** Parse Claude.ai's exported conversations.json into draft memories. */
 export async function importClaudeExport(file: string): Promise<IngestCount> {
   const data = JSON.parse(await fs.readFile(expand(file), "utf8")) as unknown;
-  const convos: ClaudeConversation[] = Array.isArray(data) ? (data as ClaudeConversation[]) : [];
+  if (!Array.isArray(data)) {
+    throw new Error("This doesn't look like a Claude.ai export. Use the conversations.json from your Claude data export (Settings → Privacy → Export data).");
+  }
+  const convos = data as ClaudeConversation[];
+  // A real Claude export is an array of conversations with `chat_messages`.
+  if (convos.length && !convos.some((c) => c && Array.isArray(c.chat_messages))) {
+    throw new Error("This JSON has no `chat_messages` — it may be the wrong file from your Claude export. Use conversations.json.");
+  }
 
   const drafts: Draft[] = [];
   for (const c of convos) {
