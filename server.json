@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ravi-labs/mindmap-mcp-server",
+  "description": "Local-first memory & context-handoff across AI tools — capture in one, resume in another. No cloud.",
+  "repository": {
+    "url": "https://github.com/ravi-labs/mindmap-mcp-server",
+    "source": "github"
+  },
+  "version": "0.4.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@ravi-labs/mindmap-mcp-server",
+      "version": "0.4.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
