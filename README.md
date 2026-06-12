@@ -232,6 +232,19 @@ cost notes are rough estimates — never a bill.
 in `~/.mindmap/llm.json`; the key is read from an **environment variable** at
 call time. You set the key; Mind Map just reads it.
 
+**Smarter search (optional).** Search is **BM25** out of the box — no LLM needed.
+With an **embeddings-capable** provider (OpenAI, Google, or Ollama — Anthropic has
+no embeddings API), build a local embedding cache for **hybrid search** (BM25 fused
+with semantic similarity via reciprocal rank fusion):
+
+```bash
+npx @ravi-labs/mindmap-mcp-server embed   # build/refresh the local embedding cache
+```
+
+It re-embeds only new/changed memories, caches vectors in `~/.mindmap/embeddings.json`,
+and `resume` / `search` / `brainstorm` use it automatically. Without it (or on
+Anthropic), search stays on BM25 — never worse.
+
 ### Step 1 — choose a provider
 
 From the dashboard's **Persona** tab (LLM section), or via the `mindmap_llm` tool
@@ -354,7 +367,8 @@ rewards a tidy, trusted memory — not a big one.
 ├── index.json          # fast list/search index
 ├── config.json         # tunable thresholds + gamification toggle
 ├── persona.json        # your evolving profile (declared + inferred facts)
-└── llm.json            # optional LLM provider + model (never your API key)
+├── llm.json            # optional LLM provider + model (never your API key)
+└── embeddings.json     # optional local embedding cache for semantic search
 ```
 
 Plain files you own and can inspect, grep, back up, or sync yourself. Tiers map

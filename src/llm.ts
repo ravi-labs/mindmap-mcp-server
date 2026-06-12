@@ -29,7 +29,16 @@ export interface LLMSettings {
   model: string;
   /** For ollama / self-hosted gateways. */
   baseUrl?: string;
+  /** Override the embeddings model (default per provider). */
+  embedModel?: string;
 }
+
+/** Embedding models per provider. Anthropic has no native embeddings API. */
+const EMBED_MODELS: Record<"openai" | "google" | "ollama", string> = {
+  openai: "text-embedding-3-small",
+  google: "text-embedding-004",
+  ollama: "nomic-embed-text",
+};
 
 interface ProviderMeta {
   /** Default model when the user doesn't pick one. */
@@ -68,6 +77,11 @@ export async function setSettings(patch: Partial<LLMSettings>): Promise<LLMSetti
       patch.model ??
       (provider !== "none" && (!cur.model || patch.provider) ? PROVIDERS[provider].defaultModel : cur.model),
     ...(patch.baseUrl !== undefined ? { baseUrl: patch.baseUrl } : cur.baseUrl ? { baseUrl: cur.baseUrl } : {}),
+    ...(patch.embedModel !== undefined
+      ? { embedModel: patch.embedModel }
+      : cur.embedModel
+        ? { embedModel: cur.embedModel }
+        : {}),
   };
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(LLM_FILE, JSON.stringify(next, null, 2), "utf8");
@@ -193,6 +207,77 @@ export async function complete(
   } catch (err) {
     if (err instanceof LLMUnavailable) throw err;
     throw new LLMUnavailable(`${provider} call failed: ${(err as Error).message}`);
+  }
+}
+
+// --- Embeddings (for semantic / hybrid search) ------------------------------
+
+/** Can we compute embeddings right now? (Anthropic has no embeddings API.) */
+export async function canEmbed(s?: LLMSettings): Promise<boolean> {
+  const cfg = s ?? (await getSettings());
+  if (cfg.provider === "none" || cfg.provider === "anthropic") return false;
+  return isReady(cfg);
+}
+
+/** The embeddings model that would be used (or null if not embed-capable). */
+export async function embedModelName(s?: LLMSettings): Promise<string | null> {
+  const cfg = s ?? (await getSettings());
+  if (cfg.provider === "none" || cfg.provider === "anthropic") return null;
+  return cfg.embedModel || EMBED_MODELS[cfg.provider];
+}
+
+/**
+ * Embed a batch of texts → one vector each. Throws LLMUnavailable so callers
+ * gracefully fall back to BM25. Supports openai / google / ollama (anthropic
+ * has no embeddings endpoint).
+ */
+export async function embed(texts: string[]): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const s = await getSettings();
+  if (!(await canEmbed(s))) {
+    throw new LLMUnavailable(`Embeddings not available for provider '${s.provider}'`);
+  }
+  const provider = s.provider as "openai" | "google" | "ollama";
+  const model = s.embedModel || EMBED_MODELS[provider];
+  const key = keyFor(s.provider);
+
+  try {
+    if (provider === "openai") {
+      const res = await fetch("https://api.openai.com/v1/embeddings", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model, input: texts }),
+      });
+      if (!res.ok) throw new LLMUnavailable(`openai embeddings ${res.status}`);
+      const j = (await res.json()) as { data?: { embedding: number[] }[] };
+      return (j.data ?? []).map((d) => d.embedding);
+    }
+    if (provider === "google") {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents?key=${key}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          requests: texts.map((t) => ({ model: `models/${model}`, content: { parts: [{ text: t }] } })),
+        }),
+      });
+      if (!res.ok) throw new LLMUnavailable(`google embeddings ${res.status}`);
+      const j = (await res.json()) as { embeddings?: { values: number[] }[] };
+      return (j.embeddings ?? []).map((e) => e.values);
+    }
+    // ollama (local) — /api/embed supports batch input
+    const base = s.baseUrl || "http://localhost:11434";
+    const res = await fetch(`${base}/api/embed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, input: texts }),
+    });
+    if (!res.ok) throw new LLMUnavailable(`ollama embeddings ${res.status}`);
+    const j = (await res.json()) as { embeddings?: number[][] };
+    return j.embeddings ?? [];
+  } catch (err) {
+    if (err instanceof LLMUnavailable) throw err;
+    throw new LLMUnavailable(`${provider} embeddings failed: ${(err as Error).message}`);
   }
 }
 

@@ -3,6 +3,22 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed / Added — better search
+
+- **BM25 relevance** replaces token-overlap in `searchEntries`: IDF weighting
+  (rare query terms matter more), document-length normalization (a tight title
+  match beats an incidental mention in a long trace), and a title field-boost.
+  Improves `mindmap_resume` / `mindmap_search` / `mindmap_brainstorm` ranking.
+- **Hybrid search (optional, BYO-key)**: with an embeddings-capable provider
+  (OpenAI / Google / Ollama), `hybridSearch` fuses BM25 with semantic similarity
+  via reciprocal rank fusion. Vectors are cached locally in
+  `~/.mindmap/embeddings.json` (only new/changed memories are re-embedded). Build
+  with the new `embed` command. Anthropic has no embeddings API, so it (and the
+  no-key path) gracefully stays on BM25 — never worse.
+  - New: `llm.embed()` / `canEmbed()`, `embeddings.ts` cache, `embed` CLI command.
+
 ## [0.4.0] — 2026-06-11
 
 ### Added

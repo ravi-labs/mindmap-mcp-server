@@ -18,6 +18,8 @@ import { runDashboard } from "./dashboard.js";
 import { runHttp } from "./http.js";
 import { importTranscriptFile, runCleanup, runImport } from "./import.js";
 import { installSkill, runInstall, runUninstall } from "./install.js";
+import { buildEmbeddings } from "./embeddings.js";
+import { canEmbed } from "./llm.js";
 import { auditLedger } from "./ledger.js";
 import { exportPassport, importExport, importPassport } from "./passport.js";
 import { syncPersona } from "./project.js";
@@ -42,6 +44,7 @@ Usage (via npx, or the installed 'mindmap-mcp-server' command):
   npx ${PKG} passport import-chatgpt <conversations.json>   Pull in a ChatGPT data export
   npx ${PKG} passport import-claude  <conversations.json>   Pull in a Claude.ai data export
   npx ${PKG} audit           Glass-box ledger: what's stored, provenance, decay
+  npx ${PKG} embed           Build the embedding cache for semantic search (needs an embeddings provider)
   npx ${PKG} persona-sync    Write your persona into your tools' config files (--force)
   npx ${PKG} dashboard       Open the local web UI (http://127.0.0.1:7777)
   npx ${PKG} quickstart      Print the getting-started guide
@@ -131,6 +134,22 @@ async function runPassport(argv: string[]): Promise<void> {
   console.error("Usage: passport export|import|import-chatgpt|import-claude [file]");
 }
 
+async function runEmbed(): Promise<void> {
+  if (!(await canEmbed())) {
+    console.log("Semantic search needs an embeddings-capable provider (openai, google, or ollama).");
+    console.log("Set one with the mindmap_llm tool or the dashboard. (Anthropic has no embeddings API.)");
+    console.log("Without it, search still works great via BM25 — no action needed.");
+    return;
+  }
+  const entries = await allEntries();
+  console.log(`Embedding ${entries.length} memories (only new/changed ones are re-embedded)…`);
+  const r = await buildEmbeddings(entries);
+  console.log(
+    `✓ ${r.embedded} embedded, ${r.reused} reused, ${r.removed} stale removed (model: ${r.model}).`,
+  );
+  console.log("Hybrid (BM25 + semantic) search is now active for resume / search / brainstorm.");
+}
+
 async function runAudit(): Promise<void> {
   const cfg = await getConfig();
   const rows = await auditLedger(await allEntries(), getThread, cfg, Date.now());
@@ -212,6 +231,7 @@ async function main(): Promise<void> {
   if (cmd === "passport") return runPassport(process.argv.slice(3));
   if (cmd === "hook") return runHook(process.argv.slice(3));
   if (cmd === "audit") return runAudit();
+  if (cmd === "embed") return runEmbed();
   if (cmd === "persona-sync") return runPersonaSync(process.argv.slice(3));
   if (cmd === "dashboard" || cmd === "ui") return runDashboard();
   if (cmd === "quickstart") {

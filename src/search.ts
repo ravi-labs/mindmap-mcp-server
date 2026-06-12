@@ -9,6 +9,8 @@
  * mention in a long trace — a real upgrade over raw token-overlap counting.
  */
 
+import { cosine, loadVectors } from "./embeddings.js";
+import { canEmbed, embed } from "./llm.js";
 import { type IndexEntry, type Tier } from "./types.js";
 
 const TIER_WEIGHT: Record<Tier, number> = { hot: 1.5, warm: 1.0, cold: 0.6 };
@@ -48,6 +50,17 @@ export interface SearchFilters {
   includeArchived?: boolean;
 }
 
+/** Apply the source/tag/tier/archived filters (shared by lexical + semantic). */
+export function applyFilters(entries: IndexEntry[], filters: SearchFilters): IndexEntry[] {
+  return entries.filter((e) => {
+    if (!filters.includeArchived && e.status === "archived") return false;
+    if (filters.source && e.source !== filters.source) return false;
+    if (filters.tier && e.tier !== filters.tier) return false;
+    if (filters.tag && !e.tags.includes(filters.tag)) return false;
+    return true;
+  });
+}
+
 export function searchEntries(
   entries: IndexEntry[],
   query: string,
@@ -57,13 +70,7 @@ export function searchEntries(
   const terms = tokenize(query);
   const dayMs = 24 * 60 * 60 * 1000;
 
-  const filtered = entries.filter((e) => {
-    if (!filters.includeArchived && e.status === "archived") return false;
-    if (filters.source && e.source !== filters.source) return false;
-    if (filters.tier && e.tier !== filters.tier) return false;
-    if (filters.tag && !e.tags.includes(filters.tag)) return false;
-    return true;
-  });
+  const filtered = applyFilters(entries, filters);
 
   // Empty query -> recency-ordered browse of the filtered set.
   if (terms.length === 0) {
@@ -116,4 +123,62 @@ export function searchEntries(
   }
 
   return scored.sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Hybrid search: BM25 (always) fused with semantic similarity (when embeddings
+ * are available + a cache exists) via Reciprocal Rank Fusion. Degrades to plain
+ * BM25 for browse queries, when no embeddings provider is configured, or when
+ * the embedding cache is empty — so it's never worse than lexical search.
+ */
+export async function hybridSearch(
+  entries: IndexEntry[],
+  query: string,
+  filters: SearchFilters,
+  now: number,
+): Promise<ScoredEntry[]> {
+  const bm = searchEntries(entries, query, filters, now);
+  if (!query.trim()) return bm; // browse mode — no semantic step
+
+  let embeddingsReady = false;
+  try {
+    embeddingsReady = await canEmbed();
+  } catch {
+    /* treat as unavailable */
+  }
+  if (!embeddingsReady) return bm;
+
+  const vectors = await loadVectors();
+  if (vectors.size === 0) return bm; // no cache built yet (run `embed`)
+
+  let qvec: number[] | undefined;
+  try {
+    qvec = (await embed([query]))[0];
+  } catch {
+    return bm; // embedding the query failed — fall back
+  }
+  if (!qvec) return bm;
+
+  // Semantic ranking over the same filtered set (can surface non-keyword matches).
+  const sem: ScoredEntry[] = [];
+  for (const e of applyFilters(entries, filters)) {
+    const v = vectors.get(e.id);
+    if (!v) continue;
+    sem.push({ entry: e, score: cosine(qvec, v) });
+  }
+  sem.sort((a, b) => b.score - a.score);
+
+  // Reciprocal Rank Fusion — robust blend without normalizing score scales.
+  const K = 60;
+  const fused = new Map<string, { entry: IndexEntry; score: number }>();
+  const add = (list: ScoredEntry[]) =>
+    list.forEach((r, i) => {
+      const cur = fused.get(r.entry.id) ?? { entry: r.entry, score: 0 };
+      cur.score += 1 / (K + i + 1);
+      fused.set(r.entry.id, cur);
+    });
+  add(bm);
+  add(sem);
+
+  return [...fused.values()].sort((a, b) => b.score - a.score);
 }

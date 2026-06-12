@@ -29,7 +29,7 @@ import {
   status as llmStatus,
   type ProviderName,
 } from "./llm.js";
-import { searchEntries, type SearchFilters } from "./search.js";
+import { hybridSearch, type SearchFilters } from "./search.js";
 import { formatTranscript, getTranscript } from "./transcript.js";
 import {
   allEntries,
@@ -159,7 +159,7 @@ Returns: the matched thread's full context plus a freshness nudge, or near-misse
     async ({ query, source }) => {
       const cfg = await getConfig();
       const entries = await allEntries();
-      const ranked = searchEntries(entries, query, { source }, Date.now());
+      const ranked = await hybridSearch(entries, query, { source }, Date.now());
       if (ranked.length === 0) {
         return text(
           `No saved context matches "${query}". Nothing to resume — start fresh, then mindmap_capture when done.`,
@@ -214,7 +214,7 @@ Returns: a brainstorm pack — persona + prior idea-threads to build on.`,
     async ({ topic }) => {
       const cfg = await getConfig();
       const entries = await allEntries();
-      const ranked = searchEntries(entries, topic, {}, Date.now());
+      const ranked = await hybridSearch(entries, topic, {}, Date.now());
       // Boost brainstorm-kind threads so ideas resurface ahead of stray chatter.
       const isBrainstorm = (e: { kind?: string; tags: string[] }) =>
         e.kind === "brainstorm" || e.tags.includes("brainstorm");
@@ -287,7 +287,7 @@ Returns: ranked list of matching memories.`,
     async ({ query, source, tag, tier, include_archived, limit }) => {
       const entries = await allEntries();
       const filters: SearchFilters = { source, tag, tier, includeArchived: include_archived };
-      const ranked = searchEntries(entries, query, filters, Date.now()).slice(0, limit);
+      const ranked = (await hybridSearch(entries, query, filters, Date.now())).slice(0, limit);
       const list = ranked.map((r) => r.entry);
       return result(
         formatList(list, `# Search: "${query || "(recent)"}" — ${ranked.length} result(s)`),
