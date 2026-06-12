@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — 2026-06-11
+
+### Added
+
+- **Auto-capture (Claude Code SessionEnd hook).** `install` now wires a `SessionEnd`
+  hook into `~/.claude/settings.json` so every substantive Claude Code session is
+  **automatically distilled into a memory** — no need to remember to save. It's
+  deduped by session id (resuming + re-ending updates in place), skips trivial and
+  automated sessions, and never blocks Claude Code. Opt out with `install --no-hook`;
+  `uninstall` removes it cleanly (merges with / preserves your other hooks).
+  - New internal command: `hook session-end` (reads the hook payload from stdin).
+
 ## [0.3.2] — 2026-06-11
 
 ### Fixed

@@ -16,7 +16,7 @@ import { DATA_DIR, SERVER_NAME, SERVER_VERSION } from "./constants.js";
 import { prune } from "./decay.js";
 import { runDashboard } from "./dashboard.js";
 import { runHttp } from "./http.js";
-import { runCleanup, runImport } from "./import.js";
+import { importTranscriptFile, runCleanup, runImport } from "./import.js";
 import { installSkill, runInstall, runUninstall } from "./install.js";
 import { auditLedger } from "./ledger.js";
 import { exportPassport, importExport, importPassport } from "./passport.js";
@@ -30,9 +30,10 @@ const HELP = `${SERVER_NAME} v${SERVER_VERSION} — local-first memory & context
 Usage (via npx, or the installed 'mindmap-mcp-server' command):
   npx ${PKG}                 Run the MCP server over stdio (default)
   TRANSPORT=http npx ${PKG}  Run over HTTP (for self-hosting; see README)
-  npx ${PKG} install         Auto-configure detected MCP clients
+  npx ${PKG} install         Auto-configure detected MCP clients + auto-capture hook
   npx ${PKG} install --dry-run   Preview install without writing
   npx ${PKG} install --local     Point clients at this checkout (pre-publish)
+  npx ${PKG} install --no-hook   Skip the Claude Code auto-capture SessionEnd hook
   npx ${PKG} uninstall       Remove Mind Map from client configs
   npx ${PKG} import          Import past sessions (--dry-run, --limit N, --project X, --source, --reimport)
   npx ${PKG} cleanup         Remove automated + duplicate imported memories (--dry-run)
@@ -155,6 +156,38 @@ async function runPersonaSync(argv: string[]): Promise<void> {
   console.log("\nTip: pass --force to write into tools that aren't auto-detected.");
 }
 
+/** Read all of stdin to a string (hook payloads arrive here as JSON). */
+async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const c of process.stdin) chunks.push(c as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * Claude Code hook entrypoint. Invoked as `… hook session-end` with the hook's
+ * JSON payload on stdin. On SessionEnd we auto-capture the just-finished session
+ * into Mind Map — distilled, deduped, never blocking the user. Always exits 0 so
+ * a hiccup never disrupts Claude Code.
+ */
+async function runHook(argv: string[]): Promise<void> {
+  const event = (argv[0] || "").toLowerCase();
+  try {
+    const raw = await readStdin();
+    const payload = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const transcript = typeof payload.transcript_path === "string" ? payload.transcript_path : "";
+    if ((event === "session-end" || event === "stop") && transcript) {
+      const r = await importTranscriptFile(transcript);
+      if (r.status !== "skipped") {
+        console.error(`[mindmap] auto-capture: ${r.status} "${r.title}" (${r.id})`);
+      }
+    }
+  } catch (err) {
+    // Never let a hook failure surface to the user.
+    console.error("[mindmap] hook error:", (err as Error).message);
+  }
+}
+
 async function runStdio(): Promise<void> {
   const server = createServer();
   const transport = new StdioServerTransport();
@@ -177,6 +210,7 @@ async function main(): Promise<void> {
   if (cmd === "import") return runImport(process.argv.slice(3));
   if (cmd === "cleanup") return runCleanup(process.argv.slice(3));
   if (cmd === "passport") return runPassport(process.argv.slice(3));
+  if (cmd === "hook") return runHook(process.argv.slice(3));
   if (cmd === "audit") return runAudit();
   if (cmd === "persona-sync") return runPersonaSync(process.argv.slice(3));
   if (cmd === "dashboard" || cmd === "ui") return runDashboard();

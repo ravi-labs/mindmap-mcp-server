@@ -521,6 +521,43 @@ function toThread(s: ParsedSession): Thread {
   };
 }
 
+/**
+ * Capture a SINGLE Claude Code transcript into Mind Map — the engine behind
+ * the auto-capture SessionEnd hook. Distilled (not a log dump): reuses the same
+ * parser as import, dedups by session id (so resuming + re-ending updates in
+ * place), and skips trivial/automated sessions.
+ */
+export async function importTranscriptFile(
+  file: string,
+  opts: { minPrompts?: number } = {},
+): Promise<{ status: "created" | "updated" | "skipped"; id?: string; title?: string; reason?: string }> {
+  const s = await parseCodeCli(file);
+  if (!s) return { status: "skipped", reason: "unparseable transcript" };
+  if (isAutomated(s.keyPoints[0])) return { status: "skipped", reason: "automated session" };
+  const minPrompts = opts.minPrompts ?? 2;
+  if (s.keyPoints.length < minPrompts) return { status: "skipped", reason: "too thin" };
+
+  const entries = await allEntries();
+  const existing = entries.find((e) => e.sourceId === s.sourceId);
+  if (existing) {
+    const t = await getThread(existing.id);
+    if (t) {
+      // Refresh content, preserve curation (status/tier/access/promotion/dates).
+      t.title = s.title;
+      t.summary = s.summary;
+      t.keyPoints = s.keyPoints;
+      if (s.ref) t.sourceRef = s.ref;
+      t.trace = makeTrace(t);
+      t.updatedAt = nowIso();
+      await saveThread(t);
+      return { status: "updated", id: t.id, title: t.title };
+    }
+  }
+  const thread = toThread(s);
+  await saveThread(thread);
+  return { status: "created", id: thread.id, title: thread.title };
+}
+
 export interface ImportResult {
   total: number;
   imported: number;

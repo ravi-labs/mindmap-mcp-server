@@ -113,8 +113,14 @@ into `~/.claude/skills` by `install`) wires the load → brainstorm → save flo
 
 ### Make capture automatic
 
-So you don't have to ask each time, add one line to your client's instructions
-(e.g. Claude Code's `CLAUDE.md`):
+For **Claude Code**, `install` adds a **`SessionEnd` auto-capture hook** — every
+substantive session is distilled into a memory automatically, so you never have
+to remember to save. It's deduped (resuming + re-ending updates in place) and
+skips trivial/automated sessions. Opt out with `install --no-hook`; it's removed
+cleanly by `uninstall`.
+
+For other clients (or as a belt-and-braces nudge), add one line to your client's
+instructions (e.g. Claude Code's `CLAUDE.md`):
 
 > At the end of a substantive session, call `mindmap_capture` to save the context.
 > When I reference past work, call `mindmap_resume` first.

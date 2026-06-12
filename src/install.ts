@@ -174,9 +174,81 @@ export async function installSkill(dryRun: boolean): Promise<string> {
   return `installed brainstorm skill → ${dest}`;
 }
 
+/**
+ * Install the auto-capture SessionEnd hook into ~/.claude/settings.json, so
+ * every Claude Code session is distilled into Mind Map automatically — no need
+ * to remember to "save". Merges into existing hooks; never clobbers them.
+ */
+function hookCommand(entry: ServerEntry): string {
+  return `${entry.command} ${entry.args.join(" ")} hook session-end`;
+}
+
+/** Identify *our* SessionEnd hook (works for both npx and local-path installs). */
+function isOurSessionHook(cmd: unknown): boolean {
+  return typeof cmd === "string" && /\bhook session-end\b/.test(cmd) && /(mindmap|index\.js)/.test(cmd);
+}
+
+export async function installSessionHook(entry: ServerEntry, dryRun: boolean): Promise<string> {
+  const settingsPath = path.join(home(), ".claude", "settings.json");
+  if (!(await exists(path.join(home(), ".claude")))) {
+    return "no ~/.claude (Claude Code not set up) — auto-capture hook skipped";
+  }
+  const cmd = hookCommand(entry);
+  if (dryRun) return `would add SessionEnd auto-capture hook → ${settingsPath}`;
+
+  const cfg = await readJson(settingsPath);
+  const hooks = (cfg.hooks ??= {}) as Record<string, unknown>;
+  const sessionEnd = (hooks.SessionEnd ??= []) as { hooks?: { type?: string; command?: string }[] }[];
+
+  // Already present? (idempotent — refresh the command in case the path changed.)
+  let found = false;
+  for (const group of sessionEnd) {
+    for (const h of group.hooks ?? []) {
+      if (isOurSessionHook(h.command)) {
+        h.command = cmd;
+        found = true;
+      }
+    }
+  }
+  if (!found) {
+    sessionEnd.push({ hooks: [{ type: "command", command: cmd }] });
+  }
+
+  if (await exists(settingsPath)) {
+    await fs.copyFile(settingsPath, `${settingsPath}.mindmap-bak`);
+  }
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fs.writeFile(settingsPath, JSON.stringify(cfg, null, 2), "utf8");
+  return found ? "auto-capture hook refreshed" : "auto-capture hook added";
+}
+
+async function removeSessionHook(): Promise<boolean> {
+  const settingsPath = path.join(home(), ".claude", "settings.json");
+  if (!(await exists(settingsPath))) return false;
+  const cfg = await readJson(settingsPath);
+  const hooks = cfg.hooks as Record<string, unknown> | undefined;
+  const sessionEnd = hooks?.SessionEnd as { hooks?: { command?: string }[] }[] | undefined;
+  if (!Array.isArray(sessionEnd)) return false;
+
+  const kept = sessionEnd
+    .map((group) => ({
+      ...group,
+      hooks: (group.hooks ?? []).filter((h) => !isOurSessionHook(h.command)),
+    }))
+    .filter((group) => (group.hooks ?? []).length > 0);
+
+  if (kept.length === sessionEnd.length) return false; // nothing removed
+  if (kept.length) (hooks as Record<string, unknown>).SessionEnd = kept;
+  else delete (hooks as Record<string, unknown>).SessionEnd;
+  await fs.copyFile(settingsPath, `${settingsPath}.mindmap-bak`);
+  await fs.writeFile(settingsPath, JSON.stringify(cfg, null, 2), "utf8");
+  return true;
+}
+
 export async function runInstall(argv: string[]): Promise<void> {
   const dryRun = argv.includes("--dry-run");
   const local = argv.includes("--local");
+  const noHook = argv.includes("--no-hook");
   const entry = serverEntry(local);
 
   console.log(`Mind Map installer ${dryRun ? "(dry run — nothing written)" : ""}`);
@@ -195,6 +267,9 @@ export async function runInstall(argv: string[]): Promise<void> {
 
   console.log(`•  Claude Code: ${tryClaudeCode(entry, dryRun)}`);
   console.log(`•  Brainstorm skill: ${await installSkill(dryRun)}`);
+  console.log(
+    `•  Auto-capture: ${noHook ? "skipped (--no-hook)" : await installSessionHook(entry, dryRun)}`,
+  );
 
   if (dryRun) {
     console.log("\n(dry run) Re-run without --dry-run to apply.");
@@ -228,5 +303,7 @@ export async function runUninstall(): Promise<void> {
   console.log(
     `•  Claude Code: run 'claude mcp remove ${ENTRY_NAME}' if you added it there.`,
   );
+  const hookRemoved = await removeSessionHook();
+  console.log(`•  Auto-capture hook: ${hookRemoved ? "removed" : "not present"}`);
   console.log("\nDone.");
 }
