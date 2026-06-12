@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mindmap": {
+      "command": "npx",
+      "args": ["-y", "@ravi-labs/mindmap-mcp-server"]
+    }
+  }
+}
