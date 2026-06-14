@@ -372,9 +372,10 @@ function renderList(items){
     g.forEach(function(t){
       var tx = t.hasTranscript ? ' <span class="txbadge" title="Full discussion available">📜</span>' : '';
       var bs = t.kind==='brainstorm' ? ' <span class="txbadge" title="Brainstorm">💡</span>' : '';
+      var rd = t.redacted ? ' <span class="txbadge" title="Secrets masked">🔒</span>' : '';
       html += '<div class="card" data-id="'+t.id+'">'+
         '<div class="t">'+(t.status==='promoted'?'★ ':'')+esc(t.title)+
-        '<span class="badge" style="border-color:'+TIER[tier].c+'">'+esc(t.source)+'</span>'+tx+bs+'</div>'+
+        '<span class="badge" style="border-color:'+TIER[tier].c+'">'+esc(t.source)+'</span>'+tx+bs+rd+'</div>'+
         '<div class="m">'+esc(t.trace||'')+'</div></div>';
     });
   });
@@ -401,6 +402,7 @@ function open_(id){
       '<div class="grow"><span class="gk">Provenance</span><span class="gv">'+esc(t._provenance||t.source)+'</span></div>'+
       '<div class="grow"><span class="gk">Trust</span><span class="gv">'+(t.accessCount||0)+'× reused'+(t.status==='promoted'?' · ★ promoted':'')+'</span></div>'+
       '<div class="grow"><span class="gk">Lifecycle</span><span class="gv">'+esc(fades)+' · last used '+(lc.lastUsedDays!=null?lc.lastUsedDays+'d ago':'—')+'</span></div>'+
+      (t.redacted ? '<div class="grow"><span class="gk">Privacy</span><span class="gv">🔒 secrets masked before saving</span></div>' : '')+
       '</div>';
     var d = document.getElementById('detail'); d.className='';
     d.innerHTML =

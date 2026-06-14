@@ -37,6 +37,8 @@ export const DEFAULTS = {
   prunerIntervalMs: 6 * 60 * 60 * 1000,
   /** Gamified curation surface (health score, tidy nudges). Opt-in. */
   gamification: true,
+  /** Mask detected secrets (API keys, tokens) before persisting. On by default. */
+  redactSecrets: true,
 } as const;
 
 export type Config = {
@@ -46,6 +48,7 @@ export type Config = {
   hotMinAccessCount: number;
   prunerIntervalMs: number;
   gamification: boolean;
+  redactSecrets: boolean;
 };
 
 export const SERVER_NAME = "mindmap-mcp-server";

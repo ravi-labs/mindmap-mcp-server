@@ -5,6 +5,17 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Added — secret redaction
+
+- **Secrets are masked before anything is persisted.** A local, no-LLM scan runs
+  at the storage choke point (`saveThread`), so no capture/import/hook/passport
+  path can write a plaintext credential to `~/.mindmap`. Detects common token
+  shapes (OpenAI/Anthropic keys, GitHub PATs, AWS/Google keys, Slack/Stripe/npm
+  tokens, private-key blocks, JWTs, bearer tokens) and replaces them with
+  `[REDACTED:<kind>]`. Matters most for **imports**, which can drag in keys pasted
+  into past sessions. Flags the memory (`redacted`) and shows a 🔒 in the
+  dashboard. On by default; toggle with the `redactSecrets` config. (#1)
+
 ### Changed / Added — better search
 
 - **BM25 relevance** replaces token-overlap in `searchEntries`: IDF weighting

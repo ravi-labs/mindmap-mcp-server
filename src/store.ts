@@ -22,6 +22,7 @@ import {
   THREADS_DIR,
   type Config,
 } from "./constants.js";
+import { redactThread } from "./redact.js";
 import { type IndexEntry, type Thread, toIndexEntry } from "./types.js";
 
 let indexCache: Map<string, IndexEntry> | null = null;
@@ -122,6 +123,10 @@ export async function getThread(id: string): Promise<Thread | null> {
 
 export async function saveThread(thread: Thread): Promise<void> {
   await ensureDirs();
+  // Central choke point: mask secrets before anything is persisted, so no
+  // capture/import/hook/passport path can write a plaintext credential to disk.
+  const cfg = await getConfig();
+  if (cfg.redactSecrets !== false) redactThread(thread);
   await atomicWrite(threadPath(thread.id), JSON.stringify(thread, null, 2));
   const idx = await loadIndex();
   idx.set(thread.id, toIndexEntry(thread));

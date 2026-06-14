@@ -374,6 +374,12 @@ rewards a tidy, trusted memory — not a big one.
 Plain files you own and can inspect, grep, back up, or sync yourself. Tiers map
 to the mental model: **hot = mem**, **warm = files**, **cold = drive (trace)**.
 
+**Secrets are masked before saving.** Because memories are plain files — and
+imports can pull in keys pasted into past sessions — every memory is scanned for
+common credential shapes (API keys, tokens, private keys) and they're replaced
+with `[REDACTED:…]` before anything is written. Masked memories are flagged (🔒).
+Best-effort, local, no LLM; toggle with the `redactSecrets` config.
+
 ## Tuning decay
 
 ```jsonc

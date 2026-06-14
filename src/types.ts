@@ -59,6 +59,8 @@ export interface Thread {
   sourceId?: string;
   /** Pointer to the original transcript, for on-demand full-discussion view. */
   sourceRef?: SourceRef;
+  /** True if one or more secrets were masked out of this memory before saving. */
+  redacted?: boolean;
 }
 
 /** Lightweight record kept in index.json for fast listing/search. */
@@ -78,6 +80,8 @@ export interface IndexEntry {
   sourceId?: string;
   /** True when a full transcript is reconstructable (transcript-backed source). */
   hasTranscript?: boolean;
+  /** True if secrets were masked out of this memory. */
+  redacted?: boolean;
 }
 
 const TRANSCRIPT_KINDS = new Set(["claude-code-cli", "cursor", "copilot"]);
@@ -98,5 +102,6 @@ export function toIndexEntry(t: Thread): IndexEntry {
     accessCount: t.accessCount,
     ...(t.sourceId ? { sourceId: t.sourceId } : {}),
     ...(t.sourceRef && TRANSCRIPT_KINDS.has(t.sourceRef.kind) ? { hasTranscript: true } : {}),
+    ...(t.redacted ? { redacted: true } : {}),
   };
 }
