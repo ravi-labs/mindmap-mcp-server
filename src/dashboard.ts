@@ -387,6 +387,7 @@ function open_(id){
     if(!t || t.error) return;
     if(VIEW!=='list') showTab('list');
     var kp = (t.keyPoints||[]).map(function(p){return '<li>'+esc(p)+'</li>';}).join('');
+    var ns = (t.nextSteps||[]).map(function(p){return '<li>'+esc(p)+'</li>';}).join('');
     var tags = (t.tags||[]).map(function(x){return '<span class="tag">#'+esc(x)+'</span>';}).join('');
     var links = (t.links||[]).length ? '<p class="meta">🔗 Linked: '+t.links.length+' discussion(s)</p>' : '';
     // Only offer "full discussion" when a transcript actually exists on disk
@@ -411,7 +412,8 @@ function open_(id){
       '<div>'+tags+'</div>'+
       glass+
       '<h3>Summary</h3><div class="md">'+md(t.summary||'')+'</div>'+
-      (kp?'<h3>Key points</h3><ul>'+kp+'</ul>':'')+links+
+      (kp?'<h3>Key points</h3><ul>'+kp+'</ul>':'')+
+      (ns?'<h3>Where you left off</h3><ul>'+ns+'</ul>':'')+links+
       (hasTranscript ? '<button id="fullBtn" class="fullbtn">📜 View full discussion</button><div id="transcript"></div>' : '')+
       '<div class="forgetrow"><button id="forgetBtn" class="forgetbtn" title="Archive to a one-line trace">🗑 Forget this</button>'+
       '<span id="forgetStatus" class="meta"></span></div>';

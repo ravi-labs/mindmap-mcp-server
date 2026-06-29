@@ -90,6 +90,14 @@ export function redactThread(thread: Thread): number {
     });
   }
 
+  if (Array.isArray(thread.nextSteps)) {
+    thread.nextSteps = thread.nextSteps.map((p) => {
+      const r = redactText(p);
+      count += r.count;
+      return r.text;
+    });
+  }
+
   if (count > 0) thread.redacted = true;
   return count;
 }

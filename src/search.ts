@@ -182,3 +182,58 @@ export async function hybridSearch(
 
   return [...fused.values()].sort((a, b) => b.score - a.score);
 }
+
+export interface TopicCluster {
+  /** Best single match — the entry promoted on reuse. */
+  anchor: IndexEntry;
+  /** Anchor + related fragments of the same topic, oldest → newest. */
+  members: IndexEntry[];
+  /** Full ranked list, for surfacing alternatives / near-misses. */
+  ranked: ScoredEntry[];
+}
+
+/**
+ * Resolve a fuzzy query to a *topic cluster*, not a single memory — the answer
+ * to topic fragmentation. Takes the best hybrid match as the anchor, then pulls
+ * its explicit links plus high-relevance siblings (above a relative floor),
+ * capped and ordered chronologically so the caller can reassemble one thread.
+ * Falls back to a 1-member cluster when nothing else clusters.
+ */
+export async function resolveTopicCluster(
+  entries: IndexEntry[],
+  query: string,
+  filters: SearchFilters,
+  now: number,
+  opts: { max?: number; floor?: number } = {},
+): Promise<TopicCluster | null> {
+  const ranked = await hybridSearch(entries, query, filters, now);
+  if (ranked.length === 0) return null;
+
+  const max = opts.max ?? 5;
+  const relFloor = opts.floor ?? 0.4;
+  const anchor = ranked[0].entry;
+  const byId = new Map(entries.map((e) => [e.id, e]));
+
+  const chosen = new Map<string, IndexEntry>();
+  chosen.set(anchor.id, anchor);
+
+  // Explicit links of the anchor — strong topic signal, regardless of score
+  // (but still subject to the same filters, e.g. archived/source).
+  for (const id of anchor.links || []) {
+    if (chosen.size >= max) break;
+    const e = byId.get(id);
+    if (e && applyFilters([e], filters).length) chosen.set(id, e);
+  }
+
+  // High-relevance siblings above a floor relative to the anchor's score.
+  const floor = ranked[0].score * relFloor;
+  for (const r of ranked.slice(1)) {
+    if (chosen.size >= max) break;
+    if (r.score >= floor) chosen.set(r.entry.id, r.entry);
+  }
+
+  const members = [...chosen.values()].sort(
+    (a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime(),
+  );
+  return { anchor, members, ranked };
+}

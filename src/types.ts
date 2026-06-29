@@ -40,6 +40,8 @@ export interface Thread {
   summary: string;
   /** Scannable bullet points — the "discussion points" to relocate fast. */
   keyPoints: string[];
+  /** Open work / where you left off — what to do next, so resuming can continue. */
+  nextSteps?: string[];
   tags: string[];
   /** Origin tool: claude-code | chatgpt | chat | cowork | claude-desktop | ... */
   source: string;

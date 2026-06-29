@@ -29,7 +29,7 @@ import {
   status as llmStatus,
   type ProviderName,
 } from "./llm.js";
-import { hybridSearch, type SearchFilters } from "./search.js";
+import { hybridSearch, resolveTopicCluster, type SearchFilters } from "./search.js";
 import { formatTranscript, getTranscript } from "./transcript.js";
 import {
   allEntries,
@@ -90,6 +90,7 @@ Args:
   - source (string): ${sourceDesc}
   - links (string[]): ids of related threads to connect (optional)
   - kind ('discussion'|'brainstorm'): mark brainstorm sessions so they can be resumed/clustered as ideas (default 'discussion')
+  - next_steps (string[]): open work / what to do next — capture this so resuming can CONTINUE the thread, not just re-read it (optional but high-value)
 
 Returns: the created thread id and its formatted record.`,
       inputSchema: {
@@ -106,10 +107,14 @@ Returns: the created thread id and its formatted record.`,
           .default([])
           .describe("ids of related threads to link"),
         kind: z.enum(["discussion", "brainstorm"]).default("discussion").describe("Thread kind"),
+        next_steps: z
+          .array(z.string())
+          .default([])
+          .describe("Open work / where you left off — so resuming can continue"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
-    async ({ title, summary, key_points, tags, source, links, kind }) => {
+    async ({ title, summary, key_points, tags, source, links, kind, next_steps }) => {
       const now = nowIso();
       const thread: Thread = {
         id: newId(),
@@ -117,6 +122,7 @@ Returns: the created thread id and its formatted record.`,
         ...(kind === "brainstorm" ? { kind } : {}),
         summary,
         keyPoints: key_points,
+        ...(next_steps.length ? { nextSteps: next_steps } : {}),
         tags,
         source,
         tier: "warm",
@@ -141,17 +147,17 @@ Returns: the created thread id and its formatted record.`,
     "mindmap_resume",
     {
       title: "Resume context",
-      description: `Find the best-matching saved context for a topic and return its summary to inject into the current (new) session — so you don't lose context across tools. This is the 'promote-on-reuse' moment: resuming a captured memory promotes it to a trusted (hot) memory and bumps its freshness. After reading, if anything is stale, call mindmap_update to trim it.
+      description: `Restart a topic by describing it in plain words — "pick up the promotion-roadmap discussion", "continue the buyer-service refactor". Resolves your description to the best match, then reassembles the WHOLE topic: the anchor memory plus its linked + closely-related fragments (a topic is usually spread across several sessions/tools), merged into one thread to continue from. Promotes the anchor on reuse. If captured, surfaces "where you left off" (next steps) so you can keep going, not just re-read.
 
-CALL THIS PROACTIVELY (you don't need to be asked) at the START of a session when the user references prior work — e.g. "let's continue", "pick up where we left off", "the X project", or any topic that sounds like it may have history. Resuming first means you start with their real context instead of asking them to re-explain.
+CALL THIS PROACTIVELY at the START of a session when the user references prior work — "let's continue", "restart the X discussion", "the X project", or any topic that may have history.
 
 Args:
-  - query (string): topic or keywords describing what you were working on
+  - query (string): topic / what you want to restart, in natural language
   - source (string): only resume memories from this origin tool (optional)
 
-Returns: the matched thread's full context plus a freshness nudge, or near-misses if nothing strong matched.`,
+Returns: a merged topic thread (anchor + related fragments) + where you left off, or near-misses.`,
       inputSchema: {
-        query: z.string().min(1).describe("Topic / keywords to resume"),
+        query: z.string().min(1).describe("Topic / what you want to restart (natural language)"),
         source: z.string().optional().describe("Restrict to this origin tool"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -159,36 +165,70 @@ Returns: the matched thread's full context plus a freshness nudge, or near-misse
     async ({ query, source }) => {
       const cfg = await getConfig();
       const entries = await allEntries();
-      const ranked = await hybridSearch(entries, query, { source }, Date.now());
-      if (ranked.length === 0) {
+      const cluster = await resolveTopicCluster(entries, query, { source }, Date.now());
+      if (!cluster) {
         return text(
           `No saved context matches "${query}". Nothing to resume — start fresh, then mindmap_capture when done.`,
         );
       }
-      const top = await getThread(ranked[0].entry.id);
-      if (!top) return text(`Index pointed to a missing thread. Try mindmap_prune.`);
 
-      applyAccess(top, cfg);
-      await saveThread(top);
-
-      const others = ranked.slice(1, 4);
-      let body = `Resuming **${top.title}** (\`${top.id}\`) — now ${top.status}, ${top.tier}.\n\nPaste the summary below into your new session:\n\n---\n${top.summary.trim()}\n---\n`;
-      if (top.keyPoints.length) {
-        body += `\nKey points:\n${top.keyPoints.map((p) => `- ${p}`).join("\n")}\n`;
+      // Load the cluster's full threads (chronological order from the resolver).
+      const threads: Thread[] = [];
+      for (const m of cluster.members) {
+        const t = await getThread(m.id);
+        if (t) threads.push(t);
       }
-      body += `\n_Still accurate? If something's stale, trim it with mindmap_update id="${top.id}"._`;
+      if (threads.length === 0) return text(`Index pointed to missing threads. Try mindmap_prune.`);
+
+      const anchor = threads.find((t) => t.id === cluster.anchor.id) ?? threads[0];
+      applyAccess(anchor, cfg); // promote-on-reuse: the anchor only
+      await saveThread(anchor);
+
+      let body: string;
+      if (threads.length === 1) {
+        body =
+          `Resuming **${anchor.title}** (\`${anchor.id}\`) — now ${anchor.status}, ${anchor.tier}.\n\n` +
+          `---\n${anchor.summary.trim()}\n---\n`;
+        if (anchor.keyPoints.length) {
+          body += `\nKey points:\n${anchor.keyPoints.map((p) => `- ${p}`).join("\n")}\n`;
+        }
+      } else {
+        body = `Resuming topic **${anchor.title}** — ${threads.length} related memories, oldest first:\n\n`;
+        for (const t of threads) {
+          const when = (t.updatedAt || "").slice(0, 10);
+          body += `### ${t.kind === "brainstorm" ? "💡 " : ""}${t.title} (\`${t.id}\` · ${t.source} · ${when})\n`;
+          body += `${t.summary.trim().slice(0, 600)}\n`;
+          if (t.keyPoints.length) body += `${t.keyPoints.slice(0, 4).map((p) => `- ${p}`).join("\n")}\n`;
+          body += `\n`;
+        }
+      }
+
+      // "Where you left off" — prefer next-steps from the most recent fragment.
+      const withNext = [...threads].reverse().find((t) => (t.nextSteps || []).length > 0);
+      if (withNext?.nextSteps?.length) {
+        body += `\n**Where you left off:**\n${withNext.nextSteps.map((s) => `- ${s}`).join("\n")}\n`;
+      }
+      body += `\n_Continue from here. If something's stale, trim it with mindmap_update id="${anchor.id}"._`;
+
+      const memberIds = new Set(threads.map((t) => t.id));
+      const others = cluster.ranked.filter((r) => !memberIds.has(r.entry.id)).slice(0, 3);
       if (others.length) {
         body += `\n\nOther near-matches:\n${others
           .map((o) => `- ${o.entry.title} (\`${o.entry.id}\`)`)
           .join("\n")}`;
       }
+
       return result(body, {
-        id: top.id,
-        title: top.title,
-        summary: top.summary,
-        keyPoints: top.keyPoints,
-        status: top.status,
-        tier: top.tier,
+        id: anchor.id, // the resumed (anchor) memory — kept stable for consumers
+        anchorId: anchor.id,
+        topic: anchor.title,
+        title: anchor.title,
+        summary: anchor.summary,
+        keyPoints: anchor.keyPoints,
+        status: anchor.status,
+        tier: anchor.tier,
+        members: threads.map((t) => ({ id: t.id, title: t.title, source: t.source, kind: t.kind || "discussion" })),
+        nextSteps: withNext?.nextSteps ?? [],
         alternatives: others.map((o) => ({ id: o.entry.id, title: o.entry.title })),
       });
     },
@@ -245,9 +285,12 @@ Returns: a brainstorm pack — persona + prior idea-threads to build on.`,
           body += `### ${t.kind === "brainstorm" ? "💡 " : ""}${t.title} (\`${t.id}\`)\n`;
           body += `${t.summary.trim().slice(0, 800)}\n`;
           if (t.keyPoints.length) body += `${t.keyPoints.slice(0, 5).map((p) => `- ${p}`).join("\n")}\n`;
+          if (t.nextSteps && t.nextSteps.length) {
+            body += `_open threads:_ ${t.nextSteps.slice(0, 3).join("; ")}\n`;
+          }
           body += `\n`;
         }
-        body += `_Build on the threads above — diverge widely, then converge. Don't just repeat them._\n`;
+        body += `_Build on the threads above (pick up the open threads especially) — diverge widely, then converge._\n`;
       } else {
         body += `No prior brainstorms on this — start fresh: diverge widely, then converge.\n`;
       }

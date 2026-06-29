@@ -5,6 +5,20 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Added — restart a topic, not just a memory
+
+- **Cluster-resume.** `mindmap_resume` now resolves a fuzzy, natural-language
+  query ("restart the promotion-roadmap discussion") to a whole **topic cluster**
+  — the best match plus its linked and closely-related fragments — and merges them
+  into one chronological thread to continue from. This addresses *topic
+  fragmentation*: a discussion is usually spread across several sessions/tools, not
+  one record. Degrades to single-record resume when nothing else clusters.
+  (New `resolveTopicCluster` in `search.ts`.)
+- **Capture "next steps".** `mindmap_capture` gains `next_steps` (open work / where
+  you left off). Resume surfaces a **"Where you left off"** block and `brainstorm`
+  shows open threads, so you *continue* a topic instead of re-reading it. Shown in
+  the dashboard detail; redacted like other content. (#2)
+
 ### Added — secret redaction
 
 - **Secrets are masked before anything is persisted.** A local, no-LLM scan runs

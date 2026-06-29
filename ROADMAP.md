@@ -12,14 +12,16 @@ Horizons are intent, not promises. Issues are where the detail lives — comment
 - Memory passport (export/import; ChatGPT & Claude data-export import)
 - Glass-box provenance + audit ledger
 - Search: BM25, with optional hybrid (BM25 + embeddings) via BYO-key
+- Cluster-resume (restart a *topic*, not a single memory) + capture "next steps"
+- Secret redaction before persist (🔒)
 - Auto-capture (Claude Code `SessionEnd` hook)
 - Local dashboard; published to npm + the Official MCP Registry
 
 ## 🔜 Now
 
 - **Cut the 0.5.0 release** — get BM25 + hybrid search + auto-capture onto npm.
-- **Redaction / secret-scan on capture & import** — [#1](https://github.com/ravi-labs/mindmap-mcp-server/issues/1)
-- **Capture next-steps / open work** (better handoff) — [#2](https://github.com/ravi-labs/mindmap-mcp-server/issues/2)
+- ~~Redaction / secret-scan on capture & import~~ — done ([#1](https://github.com/ravi-labs/mindmap-mcp-server/issues/1))
+- ~~Capture next-steps / open work~~ — done ([#2](https://github.com/ravi-labs/mindmap-mcp-server/issues/2)), shipped with cluster-resume
 
 ## 🌓 Next — trust labels & persona (where engaged users are pulling)
 
