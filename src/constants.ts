@@ -39,6 +39,8 @@ export const DEFAULTS = {
   gamification: true,
   /** Mask detected secrets (API keys, tokens) before persisting. On by default. */
   redactSecrets: true,
+  /** Log every MCP tool call (redacted) to ~/.mindmap/calls.jsonl. On by default. */
+  logCalls: true,
 } as const;
 
 export type Config = {
@@ -49,6 +51,7 @@ export type Config = {
   prunerIntervalMs: number;
   gamification: boolean;
   redactSecrets: boolean;
+  logCalls: boolean;
 };
 
 export const SERVER_NAME = "mindmap-mcp-server";

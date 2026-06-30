@@ -5,6 +5,16 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Added — call log & activity console
+
+- **Every MCP tool call is logged** (redacted) to `~/.mindmap/calls.jsonl` and
+  echoed to stderr — a single shared log across *all* clients (Claude Code,
+  Cursor…), not one process. One wrapper at `registerTools` covers every tool;
+  args are secret-redacted and truncated; the file self-rotates.
+- **Dashboard "Activity" tab** — a live console of recent calls (tool, time,
+  duration, ok/error, redacted args), newest-first, with an "errors only" filter.
+  Auto-refreshes. On by default; toggle with the `logCalls` config.
+
 ### Added — restart a topic, not just a memory
 
 - **Cluster-resume.** `mindmap_resume` now resolves a fuzzy, natural-language

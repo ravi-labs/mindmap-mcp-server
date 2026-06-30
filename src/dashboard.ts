@@ -14,6 +14,7 @@ import path from "node:path";
 
 import express from "express";
 
+import { readCalls } from "./calllog.js";
 import { DATA_DIR } from "./constants.js";
 import { health, makeTrace } from "./decay.js";
 import { buildGraph } from "./graph.js";
@@ -133,6 +134,16 @@ const PAGE = `<!doctype html>
   svg text.dim { fill:var(--muted); }
   .leaf { cursor:pointer; }
   .leaf:hover circle { stroke:var(--accent); stroke-width:2; }
+  #activityWrap { display:none; grid-column:1 / -1; overflow:auto; padding:24px 30px; }
+  .acthead { display:flex; align-items:baseline; gap:16px; }
+  .acthead h2 { margin:0; }
+  .callrow { display:flex; align-items:baseline; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .callrow .ct { color:var(--muted); flex:none; }
+  .callrow .cn { color:var(--accent); font-weight:600; flex:none; min-width:170px; }
+  .callrow .cm { color:var(--muted); flex:none; width:60px; text-align:right; }
+  .callrow .ca { color:var(--text); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.8; }
+  .callrow.err .cn { color:var(--hot); }
+  .callrow.err .ca { color:var(--hot); }
   #personaWrap { display:none; grid-column:1 / -1; overflow:auto; padding:26px 30px; }
   #personaWrap { grid-template-columns:1.6fr 1fr; gap:30px; }
   .pcol { min-width:0; }
@@ -190,6 +201,7 @@ const PAGE = `<!doctype html>
     <button id="tabTree" onclick="showTab('tree')">Tree</button>
     <button id="tabGraph" onclick="showTab('graph')">Graph</button>
     <button id="tabPersona" onclick="showTab('persona')">Persona</button>
+    <button id="tabActivity" onclick="showTab('activity')">Activity</button>
   </div>
 </header>
 <main>
@@ -288,6 +300,15 @@ const PAGE = `<!doctype html>
       <button class="pbtn" onclick="importPassport()" id="passImportBtn">⬆ Import</button>
       <span id="passImportStatus" class="pmuted"></span>
     </div>
+  </div>
+  <div id="activityWrap">
+    <div class="acthead">
+      <h2>Activity</h2>
+      <label class="txfilter"><input type="checkbox" id="actErrOnly" onchange="renderCalls()" /> errors only</label>
+      <span id="actMeta" class="pmuted"></span>
+    </div>
+    <p class="pmuted">Every MCP tool call across all your tools (Claude Code, Cursor…), newest first. Redacted, from <code>~/.mindmap/calls.jsonl</code>. Auto-refreshes.</p>
+    <div id="callLog"></div>
   </div>
 </main>
 <script>
@@ -519,14 +540,39 @@ function showTab(which){
   document.getElementById('tabTree').className = which==='tree'?'active':'';
   document.getElementById('tabGraph').className = which==='graph'?'active':'';
   document.getElementById('tabPersona').className = which==='persona'?'active':'';
+  document.getElementById('tabActivity').className = which==='activity'?'active':'';
   document.getElementById('left').style.display = which==='list'?'':'none';
   document.getElementById('right').style.display = which==='list'?'':'none';
   document.getElementById('treeWrap').style.display = which==='tree'?'block':'none';
   document.getElementById('graphWrap').style.display = which==='graph'?'block':'none';
   document.getElementById('personaWrap').style.display = which==='persona'?'grid':'none';
+  document.getElementById('activityWrap').style.display = which==='activity'?'block':'none';
   if(which==='graph'){ if(!SIM.built) loadGraph(); }
   else if(which==='persona'){ loadPersona(); }
+  else if(which==='activity'){ loadCalls(); }
   else render();
+}
+
+// ---- Activity console (MCP call log) --------------------------------------
+var CALLS = [];
+function loadCalls(){
+  fetch('/api/calls').then(function(r){return r.json();}).then(function(d){ CALLS=d.calls||[]; renderCalls(); });
+}
+function renderCalls(){
+  var box=document.getElementById('callLog'); if(!box) return;
+  var errOnly=document.getElementById('actErrOnly').checked;
+  var rows=CALLS.filter(function(c){ return !errOnly || !c.ok; });
+  document.getElementById('actMeta').textContent = rows.length+' calls'+(errOnly?' (errors)':'');
+  if(!rows.length){ box.innerHTML='<div class="empty">No tool calls logged yet. Use Mind Map in any tool and they\\'ll appear here.</div>'; return; }
+  box.innerHTML = rows.map(function(c){
+    var t=(c.ts||'').slice(11,19);
+    return '<div class="callrow'+(c.ok?'':' err')+'">'+
+      '<span class="ct">'+esc(t)+'</span>'+
+      '<span class="cn">'+(c.ok?'':'⚠ ')+esc(c.tool||'?')+'</span>'+
+      '<span class="cm">'+(c.ms!=null?c.ms+'ms':'')+'</span>'+
+      '<span class="ca" title="'+esc(c.error||c.args||'')+'">'+esc(c.error||c.args||'')+'</span>'+
+    '</div>';
+  }).join('');
 }
 
 // ---- Persona view ---------------------------------------------------------
@@ -852,6 +898,7 @@ document.getElementById('tree').addEventListener('click', function(e){
 initGraphInput();
 load();
 setInterval(load, 5000);
+setInterval(function(){ if(VIEW==='activity') loadCalls(); }, 3000);
 </script>
 </body>
 </html>`;
@@ -883,6 +930,14 @@ export async function runDashboard(): Promise<void> {
           new Date(b.lastAccessedAt).getTime() - new Date(a.lastAccessedAt).getTime(),
       );
       res.json({ health: h, threads });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get("/api/calls", async (_req, res) => {
+    try {
+      res.json({ calls: await readCalls(200) });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }

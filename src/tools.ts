@@ -11,6 +11,7 @@ import { z } from "zod";
 import { type Config } from "./constants.js";
 import { computeTier, health, makeTrace, prune } from "./decay.js";
 import { formatList, formatThread, truncate } from "./format.js";
+import { logCall } from "./calllog.js";
 import { auditLedger } from "./ledger.js";
 import { exportPassport, importExport, importPassport } from "./passport.js";
 import { detectTargets, syncPersona } from "./project.js";
@@ -73,6 +74,28 @@ function applyAccess(t: Thread, cfg: Config): void {
 }
 
 export function registerTools(server: McpServer): void {
+  // Observability: wrap every tool handler so each call is logged (redacted) to
+  // ~/.mindmap/calls.jsonl + stderr. One patch covers all tools registered below.
+  type AnyReg = (
+    name: string,
+    config: unknown,
+    handler: (args: unknown, extra: unknown) => unknown,
+  ) => unknown;
+  const srv = server as unknown as { registerTool: AnyReg };
+  const origRegister = srv.registerTool.bind(server);
+  srv.registerTool = (name, config, handler) =>
+    origRegister(name, config, async (args: unknown, extra: unknown) => {
+      const t0 = Date.now();
+      try {
+        const r = await handler(args, extra);
+        void logCall({ tool: name, ok: true, ms: Date.now() - t0, args });
+        return r;
+      } catch (err) {
+        void logCall({ tool: name, ok: false, ms: Date.now() - t0, args, error: String(err) });
+        throw err;
+      }
+    });
+
   // ----------------------------------------------------------------- capture
   server.registerTool(
     "mindmap_capture",
