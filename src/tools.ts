@@ -135,15 +135,20 @@ Returns: the created thread id and its formatted record.`,
           .array(z.string())
           .default([])
           .describe("Open work / where you left off — so resuming can continue"),
+        workspace: z
+          .string()
+          .optional()
+          .describe("Absolute project/workspace folder this is about — lets resume suggest where to continue"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
-    async ({ title, summary, key_points, tags, source, links, kind, next_steps }) => {
+    async ({ title, summary, key_points, tags, source, links, kind, next_steps, workspace }) => {
       const now = nowIso();
       const thread: Thread = {
         id: newId(),
         title,
         ...(kind === "brainstorm" ? { kind } : {}),
+        ...(workspace ? { workspace } : {}),
         summary,
         keyPoints: key_points,
         ...(next_steps.length ? { nextSteps: next_steps } : {}),
@@ -177,22 +182,32 @@ CALL THIS PROACTIVELY at the START of a session when the user references prior w
 
 Args:
   - query (string): topic / what you want to restart, in natural language
+  - id (string): resume a SPECIFIC memory by id — use after the user picks from mindmap_resume_options
   - source (string): only resume memories from this origin tool (optional)
+(Provide query OR id.)
 
-Returns: a merged topic thread (anchor + related fragments) + where you left off, or near-misses.`,
+Returns: a merged topic thread (anchor + related fragments) + where you left off + which workspace to continue in, or near-misses.`,
       inputSchema: {
-        query: z.string().min(1).describe("Topic / what you want to restart (natural language)"),
+        query: z.string().optional().describe("Topic / what you want to restart (natural language)"),
+        id: z.string().optional().describe("Resume this specific memory id (e.g. a picked choice)"),
         source: z.string().optional().describe("Restrict to this origin tool"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
-    async ({ query, source }) => {
+    async ({ query, id, source }) => {
+      if (!query && !id) return text(`Give me a topic to resume (query) or a specific id.`);
       const cfg = await getConfig();
       const entries = await allEntries();
-      const cluster = await resolveTopicCluster(entries, query, { source }, Date.now());
+      const cluster = await resolveTopicCluster(
+        entries,
+        query ?? "",
+        { source },
+        Date.now(),
+        id ? { anchorId: id } : {},
+      );
       if (!cluster) {
         return text(
-          `No saved context matches "${query}". Nothing to resume — start fresh, then mindmap_capture when done.`,
+          `No saved context matches ${id ? `id "${id}"` : `"${query}"`}. Nothing to resume — start fresh, then mindmap_capture when done.`,
         );
       }
 
@@ -227,6 +242,20 @@ Returns: a merged topic thread (anchor + related fragments) + where you left off
         }
       }
 
+      // Workspace recommendation — the folder this topic most lived in.
+      const wsTally = new Map<string, { n: number; last: number }>();
+      for (const t of threads) {
+        if (!t.workspace) continue;
+        const cur = wsTally.get(t.workspace) ?? { n: 0, last: 0 };
+        cur.n += 1;
+        cur.last = Math.max(cur.last, new Date(t.updatedAt).getTime());
+        wsTally.set(t.workspace, cur);
+      }
+      const workspace = [...wsTally.entries()].sort(
+        (a, b) => b[1].n - a[1].n || b[1].last - a[1].last,
+      )[0]?.[0];
+      if (workspace) body += `\n📂 **Continue in:** \`${workspace}\`\n`;
+
       // "Where you left off" — prefer next-steps from the most recent fragment.
       const withNext = [...threads].reverse().find((t) => (t.nextSteps || []).length > 0);
       if (withNext?.nextSteps?.length) {
@@ -253,8 +282,69 @@ Returns: a merged topic thread (anchor + related fragments) + where you left off
         tier: anchor.tier,
         members: threads.map((t) => ({ id: t.id, title: t.title, source: t.source, kind: t.kind || "discussion" })),
         nextSteps: withNext?.nextSteps ?? [],
+        workspace: workspace ?? null,
         alternatives: others.map((o) => ({ id: o.entry.id, title: o.entry.title })),
       });
+    },
+  );
+
+  // ------------------------------------------------ resume options (disambiguation)
+  server.registerTool(
+    "mindmap_resume_options",
+    {
+      title: "List topics to resume (let the user pick)",
+      description: `When the user's description is ambiguous or could match SEVERAL different topics, list the distinct candidate topics — each with the workspace it lived in — so you can ASK the user which one to resume instead of guessing. Read-only: promotes nothing. After the user picks, call mindmap_resume with that choice's id.
+
+Args:
+  - query (string): the user's natural-language description
+  - source (string): restrict to one origin tool (optional)
+Returns: up to 5 distinct candidate topics (id, title, workspace, source, last used).`,
+      inputSchema: {
+        query: z.string().min(1).describe("What the user wants to resume"),
+        source: z.string().optional().describe("Restrict to this origin tool"),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ query, source }) => {
+      const entries = await allEntries();
+      const ranked = await hybridSearch(entries, query, { source }, Date.now());
+      const dayMs = 24 * 60 * 60 * 1000;
+      const covered = new Set<string>();
+      const candidates: {
+        id: string;
+        title: string;
+        source: string;
+        tier: string;
+        workspace?: string;
+        lastUsedDays: number;
+        snippet: string;
+      }[] = [];
+      for (const r of ranked) {
+        const e = r.entry;
+        if (covered.has(e.id)) continue; // collapse fragments of the same topic
+        covered.add(e.id);
+        for (const l of e.links || []) covered.add(l);
+        candidates.push({
+          id: e.id,
+          title: e.title,
+          source: e.source,
+          tier: e.tier,
+          ...(e.workspace ? { workspace: e.workspace } : {}),
+          lastUsedDays: Math.max(0, Math.round((Date.now() - new Date(e.lastAccessedAt).getTime()) / dayMs)),
+          snippet: (e.trace || "").slice(0, 100),
+        });
+        if (candidates.length >= 5) break;
+      }
+      if (candidates.length === 0) return text(`No topics match "${query}".`);
+      const body =
+        `Found ${candidates.length} topic(s) matching "${query}" — ask which to resume, then call mindmap_resume with its id:\n\n` +
+        candidates
+          .map(
+            (c, i) =>
+              `${i + 1}. **${c.title}** (\`${c.id}\`)\n   ${c.source} · ${c.tier} · used ${c.lastUsedDays}d ago${c.workspace ? ` · 📂 ${c.workspace}` : ""}\n   ${c.snippet}`,
+          )
+          .join("\n\n");
+      return result(body, { candidates });
     },
   );
 

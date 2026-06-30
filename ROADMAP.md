@@ -13,6 +13,8 @@ Horizons are intent, not promises. Issues are where the detail lives — comment
 - Glass-box provenance + audit ledger
 - Search: BM25, with optional hybrid (BM25 + embeddings) via BYO-key
 - Cluster-resume (restart a *topic*, not a single memory) + capture "next steps"
+- Workspace-aware resume ("continue in the right folder") + pick-a-topic disambiguation
+- Periodic auto-import + voice-triggerable `mindmap_import`; MCP call log + Activity console
 - Secret redaction before persist (🔒)
 - Auto-capture (Claude Code `SessionEnd` hook)
 - Local dashboard; published to npm + the Official MCP Registry

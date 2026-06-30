@@ -45,6 +45,8 @@ export interface Thread {
   tags: string[];
   /** Origin tool: claude-code | chatgpt | chat | cowork | claude-desktop | ... */
   source: string;
+  /** Absolute project/workspace root this happened in, if known (for resume). */
+  workspace?: string;
   tier: Tier;
   status: Status;
   /** One-line distillation kept when a thread decays to cold. */
@@ -73,6 +75,7 @@ export interface IndexEntry {
   tags: string[];
   source: string;
   kind?: Kind;
+  workspace?: string;
   tier: Tier;
   status: Status;
   links: string[];
@@ -96,6 +99,7 @@ export function toIndexEntry(t: Thread): IndexEntry {
     tags: t.tags,
     source: t.source,
     ...(t.kind ? { kind: t.kind } : {}),
+    ...(t.workspace ? { workspace: t.workspace } : {}),
     tier: t.tier,
     status: t.status,
     links: t.links,

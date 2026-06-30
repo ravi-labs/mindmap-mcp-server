@@ -204,15 +204,25 @@ export async function resolveTopicCluster(
   query: string,
   filters: SearchFilters,
   now: number,
-  opts: { max?: number; floor?: number } = {},
+  opts: { max?: number; floor?: number; anchorId?: string } = {},
 ): Promise<TopicCluster | null> {
-  const ranked = await hybridSearch(entries, query, filters, now);
-  if (ranked.length === 0) return null;
+  const byId = new Map(entries.map((e) => [e.id, e]));
+
+  // Seeded by a specific id (user picked a choice): anchor on it, no search.
+  let anchor: IndexEntry;
+  let ranked: ScoredEntry[] = [];
+  if (opts.anchorId) {
+    const a = byId.get(opts.anchorId);
+    if (!a) return null;
+    anchor = a;
+  } else {
+    ranked = await hybridSearch(entries, query, filters, now);
+    if (ranked.length === 0) return null;
+    anchor = ranked[0].entry;
+  }
 
   const max = opts.max ?? 5;
   const relFloor = opts.floor ?? 0.4;
-  const anchor = ranked[0].entry;
-  const byId = new Map(entries.map((e) => [e.id, e]));
 
   const chosen = new Map<string, IndexEntry>();
   chosen.set(anchor.id, anchor);
@@ -224,12 +234,23 @@ export async function resolveTopicCluster(
     const e = byId.get(id);
     if (e && applyFilters([e], filters).length) chosen.set(id, e);
   }
-
-  // High-relevance siblings above a floor relative to the anchor's score.
-  const floor = ranked[0].score * relFloor;
-  for (const r of ranked.slice(1)) {
+  // Reverse links — entries that link TO the anchor (links are directional, but
+  // a topic cluster should be bidirectional).
+  for (const e of entries) {
     if (chosen.size >= max) break;
-    if (r.score >= floor) chosen.set(r.entry.id, r.entry);
+    if ((e.links || []).includes(anchor.id) && applyFilters([e], filters).length) {
+      chosen.set(e.id, e);
+    }
+  }
+
+  // High-relevance siblings above a floor relative to the anchor's score
+  // (only when we ran a search — an id-seeded cluster uses links only).
+  if (ranked.length > 0) {
+    const floor = ranked[0].score * relFloor;
+    for (const r of ranked.slice(1)) {
+      if (chosen.size >= max) break;
+      if (r.score >= floor) chosen.set(r.entry.id, r.entry);
+    }
   }
 
   const members = [...chosen.values()].sort(

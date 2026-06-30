@@ -89,6 +89,8 @@ interface ParsedSession {
   summary: string;
   keyPoints: string[];
   project: string;
+  /** Absolute project root (cwd) when known — for workspace-aware resume. */
+  workspace?: string;
   firstTs: string;
   lastTs: string;
   ref?: SourceRef;
@@ -190,6 +192,7 @@ async function parseCodeCli(file: string): Promise<ParsedSession | null> {
   let sessionId = path.basename(file, ".jsonl");
   let aiTitle = "";
   let project = "";
+  let workspace = "";
   const prompts: string[] = [];
   const answers: string[] = []; // assistant text — the substance/outcome
   const seen = new Set<string>();
@@ -205,7 +208,10 @@ async function parseCodeCli(file: string): Promise<ParsedSession | null> {
     }
     if (typeof o.sessionId === "string") sessionId = o.sessionId;
     if (typeof o.timestamp === "string") timestamps.push(o.timestamp);
-    if (typeof o.cwd === "string" && !project) project = path.basename(o.cwd);
+    if (typeof o.cwd === "string" && !workspace) {
+      workspace = o.cwd;
+      project = path.basename(o.cwd);
+    }
     if (o.type === "ai-title" && typeof o.aiTitle === "string") aiTitle = o.aiTitle;
     if (o.type === "user") {
       const content = (o.message as { content?: unknown } | undefined)?.content;
@@ -235,6 +241,7 @@ async function parseCodeCli(file: string): Promise<ParsedSession | null> {
     summary: composeSummary(prompts, answers),
     keyPoints: prompts.slice(0, 8).map((p) => p.slice(0, 200)),
     project: project || "unknown",
+    ...(workspace ? { workspace } : {}),
     firstTs: timestamps[0],
     lastTs: timestamps[timestamps.length - 1],
     ref: { kind: "claude-code-cli", file, sessionId },
@@ -282,7 +289,8 @@ async function parseMetaFile(
     (typeof o.cliSessionId === "string" && o.cliSessionId) ||
     (typeof o.sessionId === "string" && o.sessionId) ||
     path.basename(file, ".json");
-  const project = typeof o.cwd === "string" ? path.basename(o.cwd) : "unknown";
+  const workspace = typeof o.cwd === "string" ? o.cwd : undefined;
+  const project = workspace ? path.basename(workspace) : "unknown";
 
   return {
     sourceId,
@@ -291,6 +299,7 @@ async function parseMetaFile(
     summary: content.slice(0, 1500),
     keyPoints: initial ? [initial.slice(0, 200)] : [],
     project,
+    ...(workspace ? { workspace } : {}),
     firstTs: created,
     lastTs: last,
   };
@@ -508,6 +517,7 @@ function toThread(s: ParsedSession): Thread {
     keyPoints: s.keyPoints,
     tags: [s.project, s.source, "imported"].filter(Boolean),
     source: s.source,
+    ...(s.workspace ? { workspace: s.workspace } : {}),
     tier: "warm",
     status: "captured",
     trace: makeTrace({ title: s.title, keyPoints: s.keyPoints, summary: s.summary }),

@@ -424,6 +424,7 @@ function open_(id){
       '<div class="grow"><span class="gk">Provenance</span><span class="gv">'+esc(t._provenance||t.source)+'</span></div>'+
       '<div class="grow"><span class="gk">Trust</span><span class="gv">'+(t.accessCount||0)+'× reused'+(t.status==='promoted'?' · ★ promoted':'')+'</span></div>'+
       '<div class="grow"><span class="gk">Lifecycle</span><span class="gv">'+esc(fades)+' · last used '+(lc.lastUsedDays!=null?lc.lastUsedDays+'d ago':'—')+'</span></div>'+
+      (t.workspace ? '<div class="grow"><span class="gk">Workspace</span><span class="gv">📂 '+esc(t.workspace)+'</span></div>' : '')+
       (t.redacted ? '<div class="grow"><span class="gk">Privacy</span><span class="gv">🔒 secrets masked before saving</span></div>' : '')+
       '</div>';
     var d = document.getElementById('detail'); d.className='';

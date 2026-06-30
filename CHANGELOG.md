@@ -5,6 +5,19 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Added — workspace-aware resume + pick-a-topic
+
+- **Workspace-aware resume** (#7): capture & import now record the project root
+  (`workspace`); `mindmap_resume` infers the cluster's dominant workspace and
+  recommends **"📂 Continue in: <path>"**, so you restart a topic *in the right
+  folder*. Shown in the dashboard detail too.
+- **Resume by id + bidirectional clustering**: `mindmap_resume` gains an `id` arg
+  (resume a specific picked memory); topic clustering now follows **reverse links**
+  too, so a cluster is bidirectional.
+- **`mindmap_resume_options`** — lists the distinct candidate topics (each with its
+  workspace) so the assistant can *ask which one* you mean, then resume by id. The
+  disambiguation step for "describe → choose → continue."
+
 ### Added — periodic auto-import (set and forget)
 
 - **Background auto-import** (opt-in via `autoImport` config). While any AI client
