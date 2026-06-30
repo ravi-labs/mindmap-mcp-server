@@ -10,6 +10,10 @@
  *   http  (TRANSPORT=http) — remote clients (ChatGPT, web, multi-device)
  */
 
+import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { DATA_DIR, SERVER_NAME, SERVER_VERSION } from "./constants.js";
@@ -207,6 +211,41 @@ async function runHook(argv: string[]): Promise<void> {
   }
 }
 
+/**
+ * Background auto-import (opt-in). While any AI client has Mind Map running, this
+ * periodically pulls in NEW sessions across all sources — so you never have to
+ * ask. Runs the import as a detached SUBPROCESS (Cursor's SQLite read is heavy
+ * and would otherwise block the server's event loop), and debounces via a shared
+ * timestamp so multiple open clients don't double-run.
+ */
+async function startBackgroundImport(): Promise<void> {
+  const cfg = await getConfig();
+  if (!cfg.autoImport) return;
+  const interval = cfg.autoImportIntervalMs || 6 * 60 * 60 * 1000;
+  const stamp = path.join(DATA_DIR, ".autoimport");
+
+  const tick = async () => {
+    try {
+      const last = Number((await fs.readFile(stamp, "utf8").catch(() => "0")).trim()) || 0;
+      if (Date.now() - last < interval * 0.9) return; // another instance handled it
+      await fs.mkdir(DATA_DIR, { recursive: true });
+      await fs.writeFile(stamp, String(Date.now()), "utf8");
+      const child = spawn(process.execPath, [process.argv[1] ?? "dist/index.js", "import"], {
+        stdio: "ignore",
+        env: process.env,
+      });
+      child.unref();
+      console.error("[mindmap] auto-import: scanning for new sessions in the background");
+    } catch (err) {
+      console.error("[mindmap] auto-import scheduling failed:", err);
+    }
+  };
+
+  void tick(); // fire-and-forget first run (never blocks server startup)
+  const timer = setInterval(() => void tick(), interval);
+  timer.unref();
+}
+
 async function runStdio(): Promise<void> {
   const server = createServer();
   const transport = new StdioServerTransport();
@@ -249,6 +288,7 @@ async function main(): Promise<void> {
 
   // Server modes ------------------------------------------------------------
   await startBackgroundPruner();
+  await startBackgroundImport();
   if ((process.env.TRANSPORT || "stdio").toLowerCase() === "http") {
     await runHttp();
   } else {

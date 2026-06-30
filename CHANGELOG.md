@@ -5,6 +5,15 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Added — periodic auto-import (set and forget)
+
+- **Background auto-import** (opt-in via `autoImport` config). While any AI client
+  has Mind Map running, it periodically pulls in NEW sessions across **all sources**
+  (Claude Code, Cursor, Copilot, Cowork) — so you never have to run `import`. Runs
+  as a **detached subprocess** (Cursor's SQLite read is heavy and would block the
+  event loop) and **debounces via a shared timestamp** so multiple open clients
+  don't double-run. Interval via `autoImportIntervalMs` (default 6h).
+
 ### Added — call log & activity console
 
 - **Every MCP tool call is logged** (redacted) to `~/.mindmap/calls.jsonl` and

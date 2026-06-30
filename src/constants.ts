@@ -41,6 +41,10 @@ export const DEFAULTS = {
   redactSecrets: true,
   /** Log every MCP tool call (redacted) to ~/.mindmap/calls.jsonl. On by default. */
   logCalls: true,
+  /** Periodically import new sessions in the background (opt-in). */
+  autoImport: false,
+  /** How often background auto-import runs, in ms. */
+  autoImportIntervalMs: 6 * 60 * 60 * 1000,
 } as const;
 
 export type Config = {
@@ -52,6 +56,8 @@ export type Config = {
   gamification: boolean;
   redactSecrets: boolean;
   logCalls: boolean;
+  autoImport: boolean;
+  autoImportIntervalMs: number;
 };
 
 export const SERVER_NAME = "mindmap-mcp-server";
