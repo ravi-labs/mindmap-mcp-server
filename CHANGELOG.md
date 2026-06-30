@@ -13,6 +13,10 @@ All notable changes to this project are documented here. This project adheres to
   as a **detached subprocess** (Cursor's SQLite read is heavy and would block the
   event loop) and **debounces via a shared timestamp** so multiple open clients
   don't double-run. Interval via `autoImportIntervalMs` (default 6h).
+- **`mindmap_import` tool** — on-demand sync you can trigger by *talking*: "sync my
+  sessions", "update mind map with my latest work". Imports new sessions across all
+  sources (optionally `reimport` to refresh existing). The voice-triggerable
+  counterpart to the periodic auto-import and the dashboard Sync button.
 
 ### Added — call log & activity console
 

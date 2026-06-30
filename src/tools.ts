@@ -13,6 +13,7 @@ import { computeTier, health, makeTrace, prune } from "./decay.js";
 import { formatList, formatThread, truncate } from "./format.js";
 import { logCall } from "./calllog.js";
 import { auditLedger } from "./ledger.js";
+import { importOptions, importSessions } from "./import.js";
 import { exportPassport, importExport, importPassport } from "./passport.js";
 import { detectTargets, syncPersona } from "./project.js";
 import {
@@ -970,6 +971,42 @@ Returns: per-target outcomes.`,
         r.outcomes.map((o) => `  ${o.action === "skipped" ? "–" : "✓"} ${o.id}: ${o.action}${o.reason ? ` (${o.reason})` : ""}`).join("\n") +
         `\n\nDetected tools: ${detected.filter((d) => d.present).map((d) => d.id).join(", ") || "none"}.`;
       return result(body, { ...r, wrote: wrote.length });
+    },
+  );
+
+  // ----------------------------------------------------------------- import / sync
+  server.registerTool(
+    "mindmap_import",
+    {
+      title: "Import / sync sessions",
+      description: `Scan your local AI-tool history and import any NEW sessions into Mind Map — across Claude Code, Cursor, Copilot, and Cowork. Use this when the user says things like "import my sessions", "sync mind map", "update mind map with my latest work", "pull in my recent sessions", or "refresh my memory". (Mind Map also auto-imports periodically if enabled, but this does it on demand, now.)
+
+Args:
+  - source ('all'|'code'|'cursor'|'copilot'|'cowork'): limit to one source (default all)
+  - reimport (boolean): also refresh already-imported sessions in place (default false)
+Returns: how many sessions were imported / refreshed / skipped.`,
+      inputSchema: {
+        source: z.enum(["all", "code", "cursor", "copilot", "cowork"]).default("all").describe("Which source(s) to import"),
+        reimport: z.boolean().default(false).describe("Refresh already-imported sessions too"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ source, reimport }) => {
+      const r = await importSessions(importOptions({ source, reimport }));
+      const breakdown = Object.entries(r.counts).map(([k, v]) => `${v} ${k}`).join(", ");
+      const body =
+        `Synced your sessions${source === "all" ? "" : ` (${source})`}: ` +
+        `**${r.imported} new**${breakdown ? ` (${breakdown})` : ""}` +
+        `${r.updated ? `, ${r.updated} refreshed` : ""}. ` +
+        `Skipped ${r.skippedDup} already-imported${r.skippedThin ? `, ${r.skippedThin} thin` : ""}.`;
+      return result(body, {
+        imported: r.imported,
+        updated: r.updated,
+        skippedDup: r.skippedDup,
+        skippedThin: r.skippedThin,
+        total: r.total,
+        counts: r.counts,
+      });
     },
   );
 }
