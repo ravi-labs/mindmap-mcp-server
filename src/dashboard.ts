@@ -4,9 +4,10 @@
  *   npx @ravi-labs/mindmap-mcp-server dashboard   # -> http://127.0.0.1:7777
  *
  * Binds to loopback only (your machine, your eyes). Serves a single page plus a
- * small JSON API over the same local files the MCP server uses. Two views: a
- * tier-grouped List, and a Tree (🧠 → source → project → discussions) with linked
- * discussions joined by dashed edges.
+ * small JSON API over the same local files the MCP server uses. Tabs: a
+ * tier-grouped List, a Tree (🧠 → source → project → discussions), a topic Graph,
+ * an Organize view (your Collections + how memory is auto-organized), Persona,
+ * and an Activity console.
  */
 
 import { promises as fs } from "node:fs";
@@ -15,6 +16,14 @@ import path from "node:path";
 import express from "express";
 
 import { readCalls } from "./calllog.js";
+import {
+  addToCollection,
+  createCollection,
+  deleteCollection,
+  listCollections,
+  removeFromCollection,
+} from "./collections.js";
+import { applyCuration, curate } from "./curate.js";
 import { DATA_DIR } from "./constants.js";
 import { health, makeTrace } from "./decay.js";
 import { buildGraph } from "./graph.js";
@@ -187,6 +196,48 @@ const PAGE = `<!doctype html>
   .ptarget .pt-id { font-weight:600; }
   .ptarget .pt-tag { font-size:10px; padding:1px 7px; border-radius:20px; border:1px solid var(--line); color:var(--muted); }
   .ptarget .pt-tag.on { color:var(--cold); border-color:var(--cold); }
+  #organizeWrap { display:none; grid-column:1 / -1; overflow:auto; padding:26px 30px; grid-template-columns:1.6fr 1fr; gap:30px; }
+  .ohead { display:flex; align-items:baseline; gap:14px; margin-bottom:4px; }
+  .ohead h2 { margin:0; }
+  .colcard { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
+  .colcard .colhd { display:flex; align-items:center; gap:9px; margin-bottom:8px; }
+  .colcard .colnm { font-weight:600; font-size:15px; }
+  .colcard .colct { color:var(--muted); font-size:12px; }
+  .colcard .colpin { font-size:11px; color:var(--cold); border:1px solid var(--line); border-radius:20px; padding:1px 8px; }
+  .colcard .coldel { margin-left:auto; background:none; border:none; color:var(--muted); cursor:pointer; font-size:14px; }
+  .colcard .coldel:hover { color:var(--hot); }
+  .colitem { display:flex; align-items:center; gap:9px; padding:6px 0; border-top:1px solid var(--line); font-size:13px; }
+  .colitem .ci-t { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+  .colitem .ci-t:hover { color:var(--accent); }
+  .colitem .ci-x { background:none; border:none; color:var(--muted); cursor:pointer; font-size:14px; flex:none; }
+  .colitem .ci-x:hover { color:var(--hot); }
+  .colitem .ci-n { color:var(--muted); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .colcard .colempty { color:var(--muted); font-size:12.5px; padding:6px 0; border-top:1px solid var(--line); }
+  .autorg { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:6px 16px 14px; margin-bottom:18px; }
+  .autorg .ag { margin-top:12px; }
+  .autorg .agh { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--accent); margin-bottom:7px; }
+  .obar { display:flex; height:12px; border-radius:6px; overflow:hidden; background:var(--panel2); margin-bottom:8px; }
+  .obar > i { display:block; height:100%; }
+  .ochips { display:flex; flex-wrap:wrap; gap:6px; }
+  .ochip { font-size:12px; padding:3px 10px; border-radius:20px; border:1px solid var(--line); color:var(--muted); background:var(--panel2); }
+  .ochip b { color:var(--text); font-weight:600; }
+  .colbadge { font-size:10px; padding:1px 7px; border-radius:20px; border:1px solid var(--line); color:var(--muted); margin-left:6px; }
+  #cform input, #cform select { width:100%; padding:9px 11px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--text); margin-bottom:8px; font:inherit; }
+  #cform input::placeholder { color:var(--muted); }
+  .curatebox { background:linear-gradient(180deg,rgba(124,92,255,.10),rgba(124,92,255,.02)); border:1px solid var(--line); border-radius:12px; padding:13px 15px; margin-bottom:18px; }
+  .curatebox #curateFocus { flex:1; min-width:0; padding:9px 11px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--text); font:inherit; }
+  .curatebox #curateFocus::placeholder { color:var(--muted); }
+  #curatePanel { margin-top:12px; }
+  .sug { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:10px; padding:11px 14px; margin-bottom:10px; }
+  .sug .sh { display:flex; align-items:center; gap:9px; margin-bottom:4px; }
+  .sug .snm { font-weight:600; }
+  .sug .sct { color:var(--muted); font-size:12px; }
+  .sug .sfile { margin-left:auto; }
+  .sug .srat { color:var(--muted); font-size:12.5px; margin-bottom:7px; }
+  .sug .sitems { font-size:12.5px; color:var(--text); }
+  .sug .sitems div { padding:2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sug .smore { color:var(--muted); }
+  .pbtn.sm { padding:5px 11px; font-size:12px; }
 </style>
 </head>
 <body>
@@ -200,6 +251,7 @@ const PAGE = `<!doctype html>
     <button id="tabList" class="active" onclick="showTab('list')">List</button>
     <button id="tabTree" onclick="showTab('tree')">Tree</button>
     <button id="tabGraph" onclick="showTab('graph')">Graph</button>
+    <button id="tabOrganize" onclick="showTab('organize')">Organize</button>
     <button id="tabPersona" onclick="showTab('persona')">Persona</button>
     <button id="tabActivity" onclick="showTab('activity')">Activity</button>
   </div>
@@ -301,6 +353,41 @@ const PAGE = `<!doctype html>
       <span id="passImportStatus" class="pmuted"></span>
     </div>
   </div>
+  <div id="organizeWrap">
+    <div class="pcol">
+      <div class="ohead">
+        <h2>Your collections</h2>
+        <span class="pmuted">your layer on top of the automatic one</span>
+      </div>
+      <p class="pmuted">Group memories however you think — Goals, Parking Lot, Decisions, anything. Filing a memory here also <strong>protects it from decay</strong>: it won't be forgotten while it's filed. In any AI tool you can just say <em>"add this to my Goals"</em> or <em>"park this."</em></p>
+      <div class="curatebox">
+        <div class="prow">
+          <input id="curateFocus" placeholder="Optional focus — e.g. apps I started and never finished" />
+          <button class="pbtn primary" style="flex:none" onclick="runCurate()" id="curateBtn">✨ Auto-organize</button>
+        </div>
+        <span class="pmuted">Reads across all your sessions and proposes collections. Nothing is filed until you accept.</span>
+        <div id="curatePanel"></div>
+      </div>
+      <div id="colList"></div>
+    </div>
+    <div class="pcol pside">
+      <h3>New collection</h3>
+      <form id="cform" onsubmit="return createCol(event)">
+        <div class="prow">
+          <input id="cfEmoji" placeholder="🎯" style="flex:none;width:64px;text-align:center" maxlength="2" />
+          <input id="cfName" placeholder="e.g. Reading list" required />
+        </div>
+        <button type="submit" class="pbtn primary">Create collection</button>
+      </form>
+      <span id="cformStatus" class="pmuted"></span>
+
+      <hr class="pdiv" />
+      <h3>How Mind Map organizes automatically</h3>
+      <p class="pmuted">This always runs underneath — no setup needed. Collections sit on top of it.</p>
+      <div class="autorg" id="autorg"></div>
+      <p class="pmuted">To file something: open a memory in the <a href="#" onclick="showTab('list');return false;" style="color:var(--accent)">List</a> and use “File into…”, or just tell any AI tool.</p>
+    </div>
+  </div>
   <div id="activityWrap">
     <div class="acthead">
       <h2>Activity</h2>
@@ -355,6 +442,7 @@ function md(src){
   return html;
 }
 function projOf(t){ var skip={imported:1}; skip[t.source]=1; return (t.tags||[]).find(function(x){return !skip[x];}) || 'general'; }
+function colsForId(id){ return (COLLECTIONS||[]).filter(function(c){ return (c.items||[]).some(function(it){ return (it.id||it)===id; }); }).map(function(c){ return {id:c.id,name:c.name,emoji:c.emoji}; }); }
 
 function load(){
   fetch('/api/data').then(function(r){return r.json();}).then(function(d){
@@ -394,9 +482,11 @@ function renderList(items){
       var tx = t.hasTranscript ? ' <span class="txbadge" title="Full discussion available">📜</span>' : '';
       var bs = t.kind==='brainstorm' ? ' <span class="txbadge" title="Brainstorm">💡</span>' : '';
       var rd = t.redacted ? ' <span class="txbadge" title="Secrets masked">🔒</span>' : '';
+      var cols = colsForId(t.id);
+      var cb = cols.length ? ' <span class="txbadge" title="In: '+esc(cols.map(function(c){return c.name;}).join(', '))+'">'+(cols[0].emoji||'📁')+'</span>' : '';
       html += '<div class="card" data-id="'+t.id+'">'+
         '<div class="t">'+(t.status==='promoted'?'★ ':'')+esc(t.title)+
-        '<span class="badge" style="border-color:'+TIER[tier].c+'">'+esc(t.source)+'</span>'+tx+bs+rd+'</div>'+
+        '<span class="badge" style="border-color:'+TIER[tier].c+'">'+esc(t.source)+'</span>'+tx+bs+rd+cb+'</div>'+
         '<div class="m">'+esc(t.trace||'')+'</div></div>';
     });
   });
@@ -427,12 +517,22 @@ function open_(id){
       (t.workspace ? '<div class="grow"><span class="gk">Workspace</span><span class="gv">📂 '+esc(t.workspace)+'</span></div>' : '')+
       (t.redacted ? '<div class="grow"><span class="gk">Privacy</span><span class="gv">🔒 secrets masked before saving</span></div>' : '')+
       '</div>';
+    // Collections this memory is filed into + a control to file it elsewhere.
+    var inCols = colsForId(t.id);
+    var inChips = inCols.map(function(c){ return '<span class="colbadge">'+(c.emoji||'📁')+' '+esc(c.name)+'</span>'; }).join('');
+    var opts = '<option value="">File into…</option>'+
+      COLLECTIONS.map(function(c){ return '<option value="'+esc(c.id)+'">'+(c.emoji?c.emoji+' ':'')+esc(c.name)+'</option>'; }).join('')+
+      '<option value="__new__">＋ New collection…</option>';
+    var fileRow = '<div class="glass"><div class="grow"><span class="gk">Collections</span><span class="gv">'+
+      (inChips||'<span class="pmuted">none yet</span>')+
+      ' <select id="fileSel_'+t.id+'" onchange="fileInto(\\''+t.id+'\\')" style="margin-left:8px;padding:3px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--text)">'+opts+'</select>'+
+      '</span></div></div>';
     var d = document.getElementById('detail'); d.className='';
     d.innerHTML =
       '<h2>'+TIER[t.tier].i+' '+(t.kind==='brainstorm'?'💡 ':'')+esc(t.title)+'</h2>'+
       '<div class="meta">'+t.status+' · '+t.tier+' · '+esc(t.source)+' · used '+t.accessCount+'× · last '+(t.lastAccessedAt||'').slice(0,10)+'</div>'+
       '<div>'+tags+'</div>'+
-      glass+
+      glass+fileRow+
       '<h3>Summary</h3><div class="md">'+md(t.summary||'')+'</div>'+
       (kp?'<h3>Key points</h3><ul>'+kp+'</ul>':'')+
       (ns?'<h3>Where you left off</h3><ul>'+ns+'</ul>':'')+links+
@@ -540,15 +640,18 @@ function showTab(which){
   document.getElementById('tabList').className = which==='list'?'active':'';
   document.getElementById('tabTree').className = which==='tree'?'active':'';
   document.getElementById('tabGraph').className = which==='graph'?'active':'';
+  document.getElementById('tabOrganize').className = which==='organize'?'active':'';
   document.getElementById('tabPersona').className = which==='persona'?'active':'';
   document.getElementById('tabActivity').className = which==='activity'?'active':'';
   document.getElementById('left').style.display = which==='list'?'':'none';
   document.getElementById('right').style.display = which==='list'?'':'none';
   document.getElementById('treeWrap').style.display = which==='tree'?'block':'none';
   document.getElementById('graphWrap').style.display = which==='graph'?'block':'none';
+  document.getElementById('organizeWrap').style.display = which==='organize'?'grid':'none';
   document.getElementById('personaWrap').style.display = which==='persona'?'grid':'none';
   document.getElementById('activityWrap').style.display = which==='activity'?'block':'none';
   if(which==='graph'){ if(!SIM.built) loadGraph(); }
+  else if(which==='organize'){ loadOrganize(); }
   else if(which==='persona'){ loadPersona(); }
   else if(which==='activity'){ loadCalls(); }
   else render();
@@ -574,6 +677,138 @@ function renderCalls(){
       '<span class="ca" title="'+esc(c.error||c.args||'')+'">'+esc(c.error||c.args||'')+'</span>'+
     '</div>';
   }).join('');
+}
+
+// ---- Organize view (collections + automatic organization) -----------------
+var COLLECTIONS = [];
+function loadCollections(cb){
+  fetch('/api/collections').then(function(r){return r.json();}).then(function(d){
+    COLLECTIONS = d.collections||[]; if(cb) cb();
+  });
+}
+function loadOrganize(){ loadCollections(renderCollections); renderAutoOrg(); }
+
+function renderCollections(){
+  var box=document.getElementById('colList'); if(!box) return;
+  if(!COLLECTIONS.length){ box.innerHTML='<div class="empty">No collections yet. Create one, or tell any AI tool “add this to Goals.”</div>'; return; }
+  box.innerHTML = COLLECTIONS.map(function(c){
+    // Handlers get c.id (slug: [a-z0-9-]) — names may contain quotes and would
+    // break the inline attribute. The API slugs its input, so ids work directly.
+    var items = (c.items||[]).map(function(it){
+      var ws = it.workspace ? it.workspace.split('/').filter(Boolean).pop() : '';
+      var sub = (it.next?'↳ next: '+esc(it.next):'') + (it.next&&ws?' · ':'') + (ws?'📂 '+esc(ws):'');
+      return '<div class="colitem"><div style="flex:1;min-width:0">'+
+        '<span class="ci-t" onclick="open_(\\''+esc(it.id)+'\\')" title="'+esc(it.title)+'">'+
+        (TIER[it.tier]?TIER[it.tier].i+' ':'')+esc(it.title)+'</span>'+
+        (sub?'<div class="ci-n">'+sub+'</div>':'')+'</div>'+
+        '<button class="ci-x" title="Remove from this collection" onclick="removeFromCol(\\''+esc(c.id)+'\\',\\''+esc(it.id)+'\\')">✕</button></div>';
+    }).join('');
+    if(!items) items='<div class="colempty">Empty — file memories here from the List, or say “park this.”</div>';
+    return '<div class="colcard"><div class="colhd">'+
+      '<span style="font-size:17px">'+(c.emoji||'📁')+'</span>'+
+      '<span class="colnm">'+esc(c.name)+'</span>'+
+      '<span class="colct">'+(c.items?c.items.length:0)+'</span>'+
+      (c.pinned?'<span class="colpin">🔒 protected</span>':'')+
+      '<button class="coldel" title="Delete collection" onclick="deleteCol(\\''+esc(c.id)+'\\')">🗑</button>'+
+      '</div>'+items+'</div>';
+  }).join('');
+}
+
+// The automatic organization — computed client-side from what's already loaded.
+function renderAutoOrg(){
+  var box=document.getElementById('autorg'); if(!box) return;
+  var ts=DATA.threads||[];
+  function tally(keyFn){ var m={}; ts.forEach(function(t){ var k=keyFn(t)||'—'; m[k]=(m[k]||0)+1; });
+    return Object.keys(m).map(function(k){return {k:k,n:m[k]};}).sort(function(a,b){return b.n-a.n;}); }
+  var byTier={hot:0,warm:0,cold:0}; ts.forEach(function(t){ if(byTier[t.tier]!=null) byTier[t.tier]++; });
+  var total=ts.length||1;
+  var bar='<div class="obar">'+
+    '<i style="width:'+(byTier.hot/total*100)+'%;background:#ff6b4a" title="hot"></i>'+
+    '<i style="width:'+(byTier.warm/total*100)+'%;background:#f5c451" title="warm"></i>'+
+    '<i style="width:'+(byTier.cold/total*100)+'%;background:#5aa9e6" title="cold"></i></div>';
+  function chips(arr,max){ return '<div class="ochips">'+arr.slice(0,max||8).map(function(x){
+    return '<span class="ochip"><b>'+esc(x.k)+'</b> '+x.n+'</span>';}).join('')+
+    (arr.length>(max||8)?'<span class="ochip">+'+(arr.length-(max||8))+' more</span>':'')+'</div>'; }
+  var wsFn=function(t){ var w=t.workspace||''; if(!w) return 'no workspace'; return w.split('/').filter(Boolean).pop()||w; };
+  box.innerHTML =
+    '<div class="ag"><div class="agh">By recency (decay tiers)</div>'+bar+
+      '<div class="ochips"><span class="ochip">🔥 <b>'+byTier.hot+'</b> hot</span><span class="ochip">🌤️ <b>'+byTier.warm+'</b> warm</span><span class="ochip">❄️ <b>'+byTier.cold+'</b> cold</span></div></div>'+
+    '<div class="ag"><div class="agh">By source tool</div>'+chips(tally(function(t){return t.source;}))+'</div>'+
+    '<div class="ag"><div class="agh">By workspace</div>'+chips(tally(wsFn))+'</div>'+
+    '<div class="ag"><div class="agh">By topic</div>'+chips(tally(function(t){return projOf(t);}))+'</div>';
+}
+
+function createCol(e){ e.preventDefault();
+  var name=document.getElementById('cfName').value.trim(); if(!name) return false;
+  var emoji=document.getElementById('cfEmoji').value.trim();
+  fetch('/api/collections/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,emoji:emoji})})
+    .then(function(r){return r.json();}).then(function(){
+      document.getElementById('cfName').value=''; document.getElementById('cfEmoji').value='';
+      loadCollections(renderCollections);
+    });
+  return false;
+}
+function removeFromCol(colId,id){
+  fetch('/api/collections/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection:colId,ids:[id]})})
+    .then(function(r){return r.json();}).then(function(){ loadCollections(renderCollections); load(); });
+}
+function deleteCol(colId){
+  var c=(COLLECTIONS||[]).find(function(x){return x.id===colId;});
+  if(!confirm('Delete collection "'+(c?c.name:colId)+'"? The memories themselves stay.')) return;
+  fetch('/api/collections/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection:colId})})
+    .then(function(r){return r.json();}).then(function(){ loadCollections(renderCollections); load(); });
+}
+function fileInto(id){
+  var sel=document.getElementById('fileSel_'+id); if(!sel) return; var v=sel.value; if(!v) return;
+  var body;
+  if(v==='__new__'){ var name=prompt('New collection name:'); if(!name) { sel.value=''; return; } body={collection:name,ids:[id]}; }
+  else body={collection:v,ids:[id]};
+  fetch('/api/collections/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(){ loadCollections(function(){ open_(id); load(); }); });
+}
+
+// ---- Auto-organize (curation) ---------------------------------------------
+var SUGGEST = [];
+var CURATE_META = { scanned:'', usedLlm:false };
+function runCurate(){
+  var btn=document.getElementById('curateBtn'); var panel=document.getElementById('curatePanel');
+  var focus=document.getElementById('curateFocus').value.trim();
+  btn.disabled=true; btn.textContent='✨ Reading your sessions…';
+  panel.innerHTML='';
+  fetch('/api/curate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({focus:focus})})
+    .then(function(r){return r.json();}).then(function(d){
+      btn.disabled=false; btn.textContent='✨ Auto-organize';
+      SUGGEST=d.suggestions||[]; CURATE_META={scanned:d.scanned,usedLlm:d.usedLlm};
+      renderSuggest();
+    }).catch(function(){ btn.disabled=false; btn.textContent='✨ Auto-organize'; panel.innerHTML='<div class="empty">Curation failed.</div>'; });
+}
+function renderSuggest(){
+  var d=CURATE_META;
+  var panel=document.getElementById('curatePanel');
+  if(!SUGGEST.length){ panel.innerHTML=''; return; }
+  var head='<div class="prow" style="align-items:center;margin-bottom:10px"><span class="pmuted">Proposed from '+d.scanned+' memories'+(d.usedLlm?' · via your LLM':' · heuristic')+'</span>'+
+    '<button class="pbtn primary sm" style="margin-left:auto" onclick="applyCurate(-1)">File all</button>'+
+    '<button class="pbtn sm" onclick="SUGGEST=[];document.getElementById(\\'curatePanel\\').innerHTML=\\'\\'">Dismiss</button></div>';
+  var cards=SUGGEST.map(function(s,i){
+    var items=(s.items||[]).slice(0,6).map(function(it){return '<div>• '+esc(it.title)+'</div>';}).join('');
+    var more=(s.items||[]).length>6?'<div class="smore">…and '+(s.items.length-6)+' more</div>':'';
+    return '<div class="sug"><div class="sh"><span style="font-size:16px">'+(s.emoji||'📁')+'</span>'+
+      '<span class="snm">'+esc(s.name)+'</span><span class="sct">'+(s.items?s.items.length:0)+'</span>'+
+      '<button class="pbtn primary sm sfile" onclick="applyCurate('+i+')">File this</button></div>'+
+      (s.rationale?'<div class="srat">'+esc(s.rationale)+'</div>':'')+
+      '<div class="sitems">'+items+more+'</div></div>';
+  }).join('');
+  panel.innerHTML=head+cards;
+}
+function applyCurate(idx){
+  var chosen = idx===-1 ? SUGGEST : [SUGGEST[idx]];
+  if(!chosen.length) return;
+  fetch('/api/curate/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({suggestions:chosen})})
+    .then(function(r){return r.json();}).then(function(){
+      if(idx===-1){ SUGGEST=[]; document.getElementById('curatePanel').innerHTML=''; }
+      else { SUGGEST.splice(idx,1); renderSuggest(); }
+      loadCollections(renderCollections); load();
+    });
 }
 
 // ---- Persona view ---------------------------------------------------------
@@ -898,6 +1133,7 @@ document.getElementById('tree').addEventListener('click', function(e){
 
 initGraphInput();
 load();
+loadCollections();
 setInterval(load, 5000);
 setInterval(function(){ if(VIEW==='activity') loadCalls(); }, 3000);
 </script>
@@ -939,6 +1175,100 @@ export async function runDashboard(): Promise<void> {
   app.get("/api/calls", async (_req, res) => {
     try {
       res.json({ calls: await readCalls(200) });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // --- Collections (user-organization layer) ---------------------------------
+  app.get("/api/collections", async (_req, res) => {
+    try {
+      const cols = await listCollections();
+      const entries = await allEntries();
+      const meta = new Map(entries.map((e) => [e.id, e]));
+      const collections = [];
+      for (const c of cols) {
+        const items = [];
+        for (const id of c.items) {
+          const e = meta.get(id);
+          const t = await getThread(id);
+          items.push({
+            id,
+            title: e?.title ?? "(forgotten)",
+            tier: e?.tier ?? "cold",
+            workspace: e?.workspace ?? null,
+            next: t?.nextSteps?.[0] ?? null,
+          });
+        }
+        collections.push({ id: c.id, name: c.name, emoji: c.emoji, pinned: c.pinned, items });
+      }
+      res.json({ collections });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/collections/create", async (req, res) => {
+    try {
+      const { name, emoji } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: "name required" });
+      const c = await createCollection(String(name), emoji ? { emoji: String(emoji) } : {});
+      res.json({ ok: true, collection: c });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/collections/add", async (req, res) => {
+    try {
+      const { collection, ids } = req.body ?? {};
+      if (!collection || !Array.isArray(ids)) return res.status(400).json({ error: "collection + ids required" });
+      const c = await addToCollection(String(collection), ids.map(String));
+      res.json({ ok: true, collection: c });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/collections/remove", async (req, res) => {
+    try {
+      const { collection, ids } = req.body ?? {};
+      if (!collection || !Array.isArray(ids)) return res.status(400).json({ error: "collection + ids required" });
+      const c = await removeFromCollection(String(collection), ids.map(String));
+      res.json({ ok: !!c, collection: c });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/collections/delete", async (req, res) => {
+    try {
+      const { collection } = req.body ?? {};
+      if (!collection) return res.status(400).json({ error: "collection required" });
+      const ok = await deleteCollection(String(collection));
+      res.json({ ok });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // Auto-organize: propose collections from the whole corpus (preview only).
+  app.post("/api/curate", async (req, res) => {
+    try {
+      const focus = req.body?.focus ? String(req.body.focus) : undefined;
+      const r = await curate(focus ? { focus } : {});
+      res.json(r);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post("/api/curate/apply", async (req, res) => {
+    try {
+      const suggestions = Array.isArray(req.body?.suggestions) ? req.body.suggestions : [];
+      if (!suggestions.length) return res.status(400).json({ error: "suggestions required" });
+      const r = await applyCuration(suggestions);
+      res.json({ ok: true, ...r });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }

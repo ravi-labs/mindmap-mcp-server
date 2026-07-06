@@ -3,6 +3,60 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] — 2026-07-06
+
+**Collections — organize your memory, then use it as a launcher.** File memories
+into Goals / Parking Lot / anything ("park this"); let auto-organize propose the
+groups (including *apps you started and never finished*); then say "continue one
+of my unfinished projects" and land back in the right folder at the exact next
+step.
+
+### Added — Collections: your organization layer + an "Organize" dashboard view
+
+- **Collections** — group memories however *you* think: Goals, Parking Lot,
+  Decisions, or anything you name. Many-to-many, on top of the automatic
+  organization (tiers / source / topic / workspace), which always runs
+  underneath. Stored in `~/.mindmap/collections.json`; three starters are seeded
+  on first run.
+- **Filing protects from decay** — a memory in a *pinned* collection never falls
+  to cold. Parking something is a signal of importance, like promote-on-reuse, so
+  it resists forgetting while it's filed.
+- **New MCP tools** — `mindmap_organize` (add / remove / create / delete) and
+  `mindmap_collections` (view). Voice-triggerable in any tool: *"add this to my
+  Goals"*, *"park this"*, *"what's in my Decisions?"*.
+- **Dashboard "Organize" tab** — shows how your memory is organized: your
+  collections (with per-item remove, create, delete) **and** a live breakdown of
+  the automatic organization (by tier, source, workspace, topic). Memories show a
+  collection badge in the List, and the detail panel gains a **"File into…"**
+  control.
+
+### Added — Auto-organize (curation): let Mind Map propose your collections
+
+- **`mindmap_curate`** — reads across *all* your captured sessions and proposes
+  collections for you, so you don't file things one at a time. Always looks for
+  **unfinished projects** (things you started building but never shipped — went
+  cold, no launch signal), **Goals**, **Decisions**, and a **Parking Lot** of
+  deferred ideas. Voice-triggerable: *"what apps did I start and never finish?"*,
+  *"organize my memories for me"*. Takes an optional free-text `focus`.
+- **Two engines, graceful**: uses your own LLM if configured (richer, honors
+  `focus`); otherwise a keyword + lifecycle heuristic — no key required. Previews
+  by default (`apply=true` to file).
+- **Dashboard "✨ Auto-organize"** in the Organize tab — with a focus box; review
+  the proposed collections and accept them individually or all at once.
+
+### Added — Resume-from-collection: the list becomes a launcher
+
+- **`mindmap_resume` gains a `collection` arg** — *"continue one of my unfinished
+  projects"* now works end-to-end: one item resumes directly; several returns a
+  pick list where every candidate shows its **📂 workspace** and **↳ where you
+  left off**, so choosing is easy. Add a hint (*"the weather one"*) and it ranks
+  within the collection and drops you straight back in — full topic cluster,
+  right folder, exact next step.
+- **`mindmap_collections`** opening a collection now shows each memory's
+  workspace + next step (a launcher view, not just titles); the dashboard's
+  Organize tab shows the same **↳ next:** line on every filed item.
+- Smoke tests now cover organize / collections / curate / launcher-resume.
+
 ## [0.5.0] — 2026-06-14
 
 ### Added — workspace-aware resume + pick-a-topic

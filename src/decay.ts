@@ -6,6 +6,7 @@
  * instead of vanishing, so recall never hard-fails.
  */
 
+import { pinnedMemberIds } from "./collections.js";
 import { type Config } from "./constants.js";
 import { allEntries, getThread, saveThread } from "./store.js";
 import { type IndexEntry, type Thread, type Tier } from "./types.js";
@@ -60,9 +61,15 @@ export async function prune(cfg: Config, dryRun: boolean): Promise<PruneResult> 
   const entries = await allEntries();
   const now = Date.now();
   const changes: PruneChange[] = [];
+  // Memories filed into a pinned collection resist decay — never fall to cold.
+  // An explicit archive ("forget this") still wins over the pin.
+  const protectedIds = await pinnedMemberIds();
 
   for (const entry of entries) {
-    const target = computeTier(entry, cfg, now);
+    let target = computeTier(entry, cfg, now);
+    if (target === "cold" && entry.status !== "archived" && protectedIds.has(entry.id)) {
+      target = "warm";
+    }
     if (target === entry.tier) continue;
 
     const thread = await getThread(entry.id);

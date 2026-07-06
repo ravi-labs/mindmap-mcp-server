@@ -100,6 +100,9 @@ Just talk naturally inside your AI tool — the model calls the right tool:
 - **"What's in my mind map?"** / **"Show my mind map health"** → browse / score
 - **"What do you know about how I work?"** → reads your **persona** (see below)
 - **"Brainstorm \<topic\> with me"** → loads your prior thinking so ideas continue across tools
+- **"Add this to my Goals"** / **"park this for later"** → files it into a **collection**
+- **"What apps did I start and never finish?"** → auto-organizes your memory into collections
+- **"Continue one of my unfinished projects"** → pick one, and you're back in the right folder at the exact next step
 
 Run `npx @ravi-labs/mindmap-mcp-server quickstart` for the full getting-started guide.
 
@@ -110,6 +113,30 @@ the **shared memory**; each tool brings its own brainstorming muscle. `mindmap_b
 loads your persona and prior idea-threads on the topic, you brainstorm, and saving with
 `kind: "brainstorm"` lets it resume anywhere. A bundled **brainstorm Skill** (installed
 into `~/.claude/skills` by `install`) wires the load → brainstorm → save flow for Claude.
+
+### Organize it your way — Collections
+
+Mind Map always organizes automatically (recency tiers, source, topic, workspace).
+**Collections** are your own layer on top: named groups like 🎯 Goals, 🅿️ Parking
+Lot, ✅ Decisions — or anything you invent. Say *"add this to my Goals"* or *"park
+this"* in any tool, or use the dashboard's **Organize** tab.
+
+Two things make collections more than folders:
+
+- **Filing protects from decay.** A memory in a pinned collection won't be
+  forgotten while it's filed — parking something is a signal it matters. (An
+  explicit "forget this" still wins.)
+- **Every collection is a launcher.** *"Continue one of my unfinished projects"*
+  lists them — each with its 📂 workspace and *↳ where you left off* — pick one
+  and `mindmap_resume` drops you back in: full topic context, right folder,
+  exact next step.
+
+Don't want to file things by hand? **Auto-organize** reads across *all* your
+sessions and proposes collections — it always looks for **unfinished projects**
+(started building, went cold, never shipped), Goals, Decisions, and parked
+ideas, plus anything you ask for (*"everything about billing"*). It only
+suggests; nothing is filed until you accept. Uses your own LLM if configured,
+otherwise a no-key heuristic.
 
 ### Make capture automatic
 
@@ -314,18 +341,24 @@ After setting the env var, **restart** the server/client so it's picked up.
 npx @ravi-labs/mindmap-mcp-server dashboard   # http://127.0.0.1:7777
 ```
 
-A local web UI (loopback-only) with four views:
+A local web UI (loopback-only) with six views:
 
 - **List** — memories grouped by 🔥/🌤️/❄️ tier, searchable; click one to read its
   summary, key points, and **full discussion** (the complete conversation,
   reconstructed on demand and rendered as Markdown). A 📜 badge + filter mark
-  memories that have a full transcript.
+  memories that have a full transcript; a **File into…** control files it into a
+  collection.
 - **Tree** — 🧠 → source → project → discussion, with linked threads joined.
 - **Graph** — an auto-derived **topic map**: categories as hubs, sessions
   connected by relatedness, with category filter chips and live search. An opt-in
   **✨ LLM labels** button relabels the topic clusters using your own LLM.
+- **Organize** — your **collections** (each item with *↳ where you left off*),
+  the **✨ Auto-organize** proposer, and a live breakdown of how memory is
+  organized automatically (by tier, source, workspace, topic).
 - **Persona** — view and edit your profile (see above), add preferences, run
   inference, and configure the optional LLM — all from the browser.
+- **Activity** — a live console of every MCP call across your tools (redacted,
+  from `~/.mindmap/calls.jsonl`).
 
 A **⟳ Sync** button imports new sessions on demand, and a **cleanliness score**
 rewards a tidy, trusted memory — not a big one.
@@ -335,7 +368,12 @@ rewards a tidy, trusted memory — not a big one.
 | Tool | What it does |
 | --- | --- |
 | `mindmap_capture` | Silently save a context summary (the effortless half of the loop). |
-| `mindmap_resume` | Find + return the best context for a topic; **promotes on reuse**. |
+| `mindmap_resume` | Find + return the best context for a topic; **promotes on reuse**. Also a launcher: pass `collection` to resume out of e.g. "Unfinished projects". |
+| `mindmap_resume_options` | List distinct candidate topics (with workspace) so the user can pick which to resume. |
+| `mindmap_import` | On-demand session sync — "update mind map with my recent work". |
+| `mindmap_organize` | File memories into collections — "add this to my Goals", "park this". |
+| `mindmap_collections` | View collections; opening one shows workspace + where-you-left-off per item. |
+| `mindmap_curate` | Auto-organize: scan everything, propose collections (unfinished projects, goals, decisions, parked). Preview-first. |
 | `mindmap_brainstorm` | Brainstorm a topic *with* your memory — loads prior idea-threads so ideas continue across tools. |
 | `mindmap_search` | Read-only search across every tier and tool. |
 | `mindmap_list` | Browse memories with filters. |
@@ -367,7 +405,9 @@ rewards a tidy, trusted memory — not a big one.
 ├── index.json          # fast list/search index
 ├── config.json         # tunable thresholds + gamification toggle
 ├── persona.json        # your evolving profile (declared + inferred facts)
+├── collections.json    # your collections (Goals, Parking Lot, …) — ids only
 ├── llm.json            # optional LLM provider + model (never your API key)
+├── calls.jsonl         # redacted log of every MCP call (the Activity view)
 └── embeddings.json     # optional local embedding cache for semantic search
 ```
 

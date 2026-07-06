@@ -12,6 +12,15 @@ import { type Config } from "./constants.js";
 import { computeTier, health, makeTrace, prune } from "./decay.js";
 import { formatList, formatThread, truncate } from "./format.js";
 import { logCall } from "./calllog.js";
+import {
+  addToCollection,
+  createCollection,
+  deleteCollection,
+  listCollections,
+  removeFromCollection,
+  slug,
+} from "./collections.js";
+import { applyCuration, curate } from "./curate.js";
 import { auditLedger } from "./ledger.js";
 import { importOptions, importSessions } from "./import.js";
 import { exportPassport, importExport, importPassport } from "./passport.js";
@@ -43,7 +52,7 @@ import {
   saveThread,
   setConfig,
 } from "./store.js";
-import { type Thread, type Tier } from "./types.js";
+import { type IndexEntry, type Thread, type Tier } from "./types.js";
 
 const tierEnum = z.enum(["hot", "warm", "cold"]);
 const sourceDesc =
@@ -180,24 +189,89 @@ Returns: the created thread id and its formatted record.`,
 
 CALL THIS PROACTIVELY at the START of a session when the user references prior work — "let's continue", "restart the X discussion", "the X project", or any topic that may have history.
 
+Also works as a LAUNCHER for collections: "continue one of my unfinished projects", "pick up something from my parking lot" → pass collection; a single item resumes directly, several returns a pick list (each with where-you-left-off) — ask the user, then call again with the chosen id.
+
 Args:
   - query (string): topic / what you want to restart, in natural language
   - id (string): resume a SPECIFIC memory by id — use after the user picks from mindmap_resume_options
+  - collection (string): resume from a collection, e.g. "Unfinished projects", "Parking Lot" (with query: picks the best match inside it)
   - source (string): only resume memories from this origin tool (optional)
-(Provide query OR id.)
+(Provide query, id, or collection.)
 
 Returns: a merged topic thread (anchor + related fragments) + where you left off + which workspace to continue in, or near-misses.`,
       inputSchema: {
         query: z.string().optional().describe("Topic / what you want to restart (natural language)"),
         id: z.string().optional().describe("Resume this specific memory id (e.g. a picked choice)"),
+        collection: z.string().optional().describe("Resume from this collection (e.g. 'Unfinished projects')"),
         source: z.string().optional().describe("Restrict to this origin tool"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
-    async ({ query, id, source }) => {
-      if (!query && !id) return text(`Give me a topic to resume (query) or a specific id.`);
+    async ({ query, id, collection, source }) => {
+      if (!query && !id && !collection) {
+        return text(`Give me a topic to resume (query), a specific id, or a collection.`);
+      }
       const cfg = await getConfig();
       const entries = await allEntries();
+
+      // Launcher mode: resume out of a collection ("continue one of my
+      // unfinished projects"). One item → straight in; several → pick list.
+      if (collection && !id) {
+        const cols = await listCollections();
+        const want = slug(collection);
+        const col = cols.find((c) => c.id === want || c.name.toLowerCase() === collection.toLowerCase());
+        if (!col) {
+          const names = cols.map((c) => `${c.emoji ?? "📁"} ${c.name}`).join(", ") || "(none yet)";
+          return text(`No collection matches "${collection}". You have: ${names}.`);
+        }
+        const byId = new Map(entries.map((e) => [e.id, e]));
+        const memberEntries = col.items.map((i) => byId.get(i)).filter((e): e is IndexEntry => Boolean(e));
+        if (!memberEntries.length) {
+          return text(`${col.emoji ?? "📁"} **${col.name}** is empty — nothing to resume. File things with mindmap_organize or mindmap_curate.`);
+        }
+        if (query && memberEntries.length > 1) {
+          // "continue the weather one" — rank within the collection.
+          const ranked = await hybridSearch(memberEntries, query, {}, Date.now());
+          if (ranked[0]) id = ranked[0].entry.id;
+        } else if (memberEntries.length === 1) {
+          id = memberEntries[0].id;
+        }
+        if (!id) {
+          // Pick list — each with where-you-left-off, so choosing is easy.
+          const dayMs = 24 * 60 * 60 * 1000;
+          const picks: {
+            id: string;
+            title: string;
+            tier: string;
+            workspace?: string;
+            nextSteps: string[];
+            lastUsedDays: number;
+          }[] = [];
+          for (const e of memberEntries.slice(0, 10)) {
+            const t = await getThread(e.id);
+            picks.push({
+              id: e.id,
+              title: e.title,
+              tier: e.tier,
+              ...(e.workspace ? { workspace: e.workspace } : {}),
+              nextSteps: t?.nextSteps ?? [],
+              lastUsedDays: Math.max(0, Math.round((Date.now() - new Date(e.lastAccessedAt).getTime()) / dayMs)),
+            });
+          }
+          const body =
+            `${col.emoji ?? "📁"} **${col.name}** — ${memberEntries.length} to choose from. Ask which one, then call mindmap_resume with its id:\n\n` +
+            picks
+              .map(
+                (p, i) =>
+                  `${i + 1}. **${p.title}** (\`${p.id}\`) · ${p.tier} · ${p.lastUsedDays}d ago` +
+                  (p.workspace ? `\n   📂 ${p.workspace}` : "") +
+                  (p.nextSteps.length ? `\n   ↳ next: ${p.nextSteps[0]}` : ""),
+              )
+              .join("\n\n") +
+            (memberEntries.length > 10 ? `\n\n…and ${memberEntries.length - 10} more (mindmap_collections collection="${col.name}").` : "");
+          return result(body, { collection: col.name, candidates: picks });
+        }
+      }
       const cluster = await resolveTopicCluster(
         entries,
         query ?? "",
@@ -1097,6 +1171,181 @@ Returns: how many sessions were imported / refreshed / skipped.`,
         total: r.total,
         counts: r.counts,
       });
+    },
+  );
+
+  // --- Collections: the user-organization layer -------------------------------
+
+  server.registerTool(
+    "mindmap_organize",
+    {
+      title: "Organize memories into collections",
+      description: `File memories into user-defined **collections** (Goals, Parking Lot, Decisions, or anything you name). Collections are your own organization layer on top of Mind Map's automatic one. Use this when the user says things like "add this to my Goals", "park this for later", "put that under Decisions", "make a collection called X", "take that out of Goals", or "delete the Parking Lot collection".
+
+Filing a memory into a collection also **protects it from decay** — it won't be forgotten while it's filed (that's the point of parking something).
+
+Args:
+  - action ('add'|'remove'|'create'|'delete'): what to do
+  - collection (string): the collection name (created automatically on 'add' if new)
+  - ids (string[]): memory ids to add/remove (from a recent capture/resume/search)
+  - emoji (string, optional): icon when creating a collection
+Returns: the affected collection and its size.`,
+      inputSchema: {
+        action: z.enum(["add", "remove", "create", "delete"]).describe("What to do"),
+        collection: z.string().min(1).describe("Collection name, e.g. 'Goals'"),
+        ids: z.array(z.string()).default([]).describe("Memory ids to add or remove"),
+        emoji: z.string().optional().describe("Icon for a new collection"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ action, collection, ids, emoji }) => {
+      if (action === "delete") {
+        const ok = await deleteCollection(collection);
+        return result(
+          ok ? `Deleted collection **${collection}**.` : `No collection named **${collection}**.`,
+          { action, collection, deleted: ok },
+        );
+      }
+      if (action === "create") {
+        const c = await createCollection(collection, emoji ? { emoji } : {});
+        return result(`Created collection ${c.emoji ?? "📁"} **${c.name}**.`, {
+          action,
+          collection: c.name,
+          id: c.id,
+          size: c.items.length,
+        });
+      }
+      if (action === "remove") {
+        const c = await removeFromCollection(collection, ids);
+        if (!c) return result(`No collection named **${collection}**.`, { action, collection, ok: false });
+        return result(`Removed ${ids.length} from ${c.emoji ?? "📁"} **${c.name}** (${c.items.length} left).`, {
+          action,
+          collection: c.name,
+          removed: ids.length,
+          size: c.items.length,
+        });
+      }
+      // add (default)
+      const c = await addToCollection(collection, ids);
+      return result(`Filed ${ids.length} into ${c.emoji ?? "📁"} **${c.name}** (${c.items.length} total). Protected from decay while filed.`, {
+        action,
+        collection: c.name,
+        added: ids.length,
+        size: c.items.length,
+      });
+    },
+  );
+
+  server.registerTool(
+    "mindmap_collections",
+    {
+      title: "View collections",
+      description: `Show your collections and what's in them — your own organization of memory (Goals, Parking Lot, etc.). Use when the user asks "what's in my Goals?", "show my collections", "what did I park?", or "what have I organized?".
+
+Opening a specific collection shows each memory with its workspace and where-you-left-off, so the user can pick one and you resume it via mindmap_resume (id, or collection+query).
+
+Args:
+  - collection (string, optional): show just this one, with its memories; omit to list all with counts
+Returns: collections with their memory titles (+ workspace and next steps when opening one).`,
+      inputSchema: {
+        collection: z.string().optional().describe("A specific collection to open"),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async ({ collection }) => {
+      const all = await listCollections();
+      const entries = await allEntries();
+      const titleOf = (id: string) => entries.find((e) => e.id === id)?.title ?? "(forgotten)";
+
+      if (collection) {
+        const c = all.find((x) => x.id === slug(collection) || x.name.toLowerCase() === collection.toLowerCase());
+        if (!c) return result(`No collection named **${collection}**.`, { collection, found: false });
+        const byId = new Map(entries.map((e) => [e.id, e]));
+        const items: { id: string; title: string; workspace?: string; nextSteps: string[] }[] = [];
+        for (const id of c.items) {
+          const e = byId.get(id);
+          const t = await getThread(id);
+          items.push({
+            id,
+            title: e?.title ?? "(forgotten)",
+            ...(e?.workspace ? { workspace: e.workspace } : {}),
+            nextSteps: t?.nextSteps ?? [],
+          });
+        }
+        const lines = items.length
+          ? items
+              .map(
+                (i) =>
+                  `- **${i.title}** (\`${i.id}\`)` +
+                  (i.workspace ? ` · 📂 ${i.workspace}` : "") +
+                  (i.nextSteps.length ? `\n  ↳ next: ${i.nextSteps[0]}` : ""),
+              )
+              .join("\n")
+          : "_(empty)_";
+        return result(
+          `### ${c.emoji ?? "📁"} ${c.name}\n${lines}\n\n_To pick one up: mindmap_resume with its id (or collection="${c.name}" + a hint)._`,
+          { collection: c.name, items },
+        );
+      }
+
+      if (!all.length) return result("No collections yet. Say \"add this to Goals\" to start one.", { collections: [] });
+      const body = all
+        .map((c) => `- ${c.emoji ?? "📁"} **${c.name}** — ${c.items.length} ${c.items.length === 1 ? "item" : "items"}${c.pinned ? " · 🔒 protected" : ""}`)
+        .join("\n");
+      return result(`### Your collections\n${body}`, {
+        collections: all.map((c) => ({ id: c.id, name: c.name, emoji: c.emoji, pinned: c.pinned, size: c.items.length })),
+      });
+    },
+  );
+
+  server.registerTool(
+    "mindmap_curate",
+    {
+      title: "Auto-organize memories into collections",
+      description: `Read across ALL your captured sessions and PROPOSE collections automatically — so you don't have to file things one by one. Great for "figure out what I'm working on", "what apps did I start and never finish?", "organize my memories for me", "find my goals and parked ideas".
+
+It always looks for: **unfinished projects** (things you started building but never shipped), **Goals**, **Decisions**, and a **Parking Lot** of deferred ideas — plus anything your \`focus\` points at. Uses your own LLM if you've configured one (richer, honors focus); otherwise a keyword+lifecycle heuristic.
+
+By default it only SUGGESTS (nothing is written) so you can review first. Pass apply=true to actually create the collections and file the memories.
+
+Args:
+  - focus (string, optional): steer it, e.g. "apps I started and never finished", "everything about billing"
+  - apply (boolean): file the suggestions into collections now (default false = preview only)
+Returns: proposed (or created) collections with the memories in each.`,
+      inputSchema: {
+        focus: z.string().optional().describe("What to organize around, in your words"),
+        apply: z.boolean().default(false).describe("Create collections & file memories now"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async ({ focus, apply }) => {
+      const r = await curate(focus ? { focus } : {});
+      if (!r.suggestions.length) {
+        return result(
+          `Scanned ${r.scanned} memories but didn't find clear groups yet. As you capture more work — or set \`focus\` (e.g. "apps I never finished") — this gets sharper.`,
+          { scanned: r.scanned, usedLlm: r.usedLlm, suggestions: [] },
+        );
+      }
+      const preview = r.suggestions
+        .map((s) => {
+          const head = `**${s.emoji} ${s.name}** — ${s.items.length} · _${s.rationale}_`;
+          const items = s.items.slice(0, 8).map((i) => `  - ${i.title}`).join("\n");
+          const more = s.items.length > 8 ? `\n  - …and ${s.items.length - 8} more` : "";
+          return `${head}\n${items}${more}`;
+        })
+        .join("\n\n");
+
+      if (!apply) {
+        return result(
+          `Here's how I'd organize your ${r.scanned} memories${r.usedLlm ? " (using your LLM)" : ""} — say the word to file them, or run again with apply:\n\n${preview}`,
+          { scanned: r.scanned, usedLlm: r.usedLlm, applied: false, suggestions: r.suggestions },
+        );
+      }
+      const { created, filed } = await applyCuration(r.suggestions);
+      return result(
+        `Organized your memories: **${created} new collection(s)**, **${filed} memories filed** (protected from decay while filed).\n\n${preview}`,
+        { scanned: r.scanned, usedLlm: r.usedLlm, applied: true, created, filed, suggestions: r.suggestions },
+      );
     },
   );
 }

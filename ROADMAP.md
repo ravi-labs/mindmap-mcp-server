@@ -18,12 +18,25 @@ Horizons are intent, not promises. Issues are where the detail lives — comment
 - Secret redaction before persist (🔒)
 - Auto-capture (Claude Code `SessionEnd` hook)
 - Local dashboard; published to npm + the Official MCP Registry
+- **0.6.0**: Collections (your organization layer, decay-protected) + auto-organize
+  ("apps I started and never finished") + resume-from-collection launcher + Organize tab
 
-## 🔜 Now
+## 🔜 Now — make 0.6.0 stick (depth, not breadth)
 
-- **Cut the 0.5.0 release** — get BM25 + hybrid search + auto-capture onto npm.
-- ~~Redaction / secret-scan on capture & import~~ — done ([#1](https://github.com/ravi-labs/mindmap-mcp-server/issues/1))
-- ~~Capture next-steps / open work~~ — done ([#2](https://github.com/ravi-labs/mindmap-mcp-server/issues/2)), shipped with cluster-resume
+The guiding rule this cycle: **no new concepts.** Users have capture, resume,
+persona, and now collections — that's the full vocabulary. Everything below makes
+those four *more true*, not bigger.
+
+- **Ship 0.6.0** — npm + MCP registry + GitHub release.
+- **Close the loop at session start** — the SessionStart companion to the existing
+  SessionEnd hook: opening a tool in a workspace surfaces "you have N unfinished
+  projects here — pick up or start fresh?" Nobody goes looking for their parking
+  lot; it has to come to them.
+- **Keep collections fresh** — fold curation into the existing auto-import (opt-in):
+  new sessions quietly land in existing collections; *new* collections are only
+  ever proposed, never auto-created.
+- **Hygiene** — purge deleted thread ids from collections; rank-then-chunk LLM
+  curation so 300+ session corpora are fully covered.
 
 ## 🌓 Next — trust labels & persona (where engaged users are pulling)
 
@@ -34,6 +47,13 @@ Horizons are intent, not promises. Issues are where the detail lives — comment
 
 ## 🌙 Later
 
+- **Phone access, the local-first way** — make the dashboard responsive + a PWA
+  (installable, "Add to Home Screen"), reachable from your own devices via the
+  existing token-protected HTTP transport (e.g. over Tailscale). Review, tidy,
+  and check your parking lot from the couch — **no cloud, no sync service**. A
+  native app only makes sense if a hosted-sync story ever exists (a separate,
+  deliberate decision — it would touch the "your data never leaves your machine"
+  promise).
 - **Smarter decay curve** — move beyond tiered windows toward a recall-probability-informed forgetting model (Ebbinghaus-style). On-thesis ("forgetting well"); a research spike.
 - **Validate & expand importers** — verify ChatGPT/Claude export parsing against large real exports; consider more sources.
 - **Embeddings polish** — auto-refresh the cache on capture; dashboard "build embeddings" control.
